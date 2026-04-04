@@ -1,0 +1,492 @@
+<!-- UX/Webview/index.html — VSGrok Premium Chat UI -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="{{MARKED_URI}}"></script>
+  <style>
+    /* ── Reset & base ── */
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      font-family:var(--vscode-font-family);
+      font-size:var(--vscode-font-size,13px);
+      background:var(--vscode-editor-background);
+      color:var(--vscode-editor-foreground);
+      display:flex;flex-direction:column;height:100vh;overflow:hidden;
+    }
+
+    /* ── Header ── */
+    #header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:8px 12px;gap:8px;flex-shrink:0;
+      background:linear-gradient(135deg,rgba(99,102,241,.10) 0%,rgba(168,85,247,.08) 100%);
+      border-bottom:1px solid var(--vscode-panel-border,rgba(128,128,128,.2));
+    }
+    .header-left{display:flex;align-items:center;gap:6px}
+    .dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e88;flex-shrink:0}
+    .brand{font-weight:700;font-size:12px;letter-spacing:.3px;white-space:nowrap}
+    .header-right{display:flex;align-items:center;gap:6px}
+
+    /* dropdown / small buttons */
+    .h-select{
+      background:var(--vscode-dropdown-background,var(--vscode-input-background));
+      color:var(--vscode-dropdown-foreground,var(--vscode-editor-foreground));
+      border:1px solid var(--vscode-dropdown-border,var(--vscode-input-border,rgba(128,128,128,.25)));
+      border-radius:4px;padding:2px 4px;font-size:11px;outline:none;cursor:pointer;
+      max-width:160px;
+    }
+    .h-btn{
+      background:transparent;
+      border:1px solid var(--vscode-button-secondaryBackground,rgba(128,128,128,.25));
+      color:var(--vscode-editor-foreground);
+      padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;
+      transition:background .15s;white-space:nowrap;
+    }
+    .h-btn:hover{background:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,.15))}
+    .h-btn.active{background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,.2))}
+
+    /* ── Settings panel ── */
+    #settings-panel{
+      display:none;padding:8px 12px;flex-shrink:0;
+      background:var(--vscode-sideBar-background,var(--vscode-editor-background));
+      border-bottom:1px solid var(--vscode-panel-border,rgba(128,128,128,.2));
+    }
+    #settings-panel.open{display:block}
+    .slider-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px}
+    .slider-row label{min-width:80px;opacity:.7}
+    .slider-row input[type=range]{flex:1;accent-color:var(--vscode-button-background,#6366f1)}
+    .slider-row .val{min-width:36px;text-align:right;font-variant-numeric:tabular-nums;opacity:.8}
+
+    /* ── Messages ── */
+    #messages{flex:1;overflow-y:auto;padding:10px 12px;scroll-behavior:smooth}
+    #messages::-webkit-scrollbar{width:5px}
+    #messages::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background,rgba(128,128,128,.25));border-radius:4px}
+    #messages::-webkit-scrollbar-thumb:hover{background:var(--vscode-scrollbarSlider-hoverBackground,rgba(128,128,128,.4))}
+
+    .message{
+      margin-bottom:12px;padding:9px 12px;border-radius:10px;
+      line-height:1.55;font-size:13px;word-wrap:break-word;
+      animation:fadeIn .2s ease;position:relative;
+    }
+    @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+    .message.user{
+      background:var(--vscode-button-background,#4f46e5);
+      color:var(--vscode-button-foreground,#fff);
+      margin-left:20px;border-bottom-right-radius:3px;
+    }
+    .message.assistant{
+      background:var(--vscode-editor-inactiveSelectionBackground,var(--vscode-editor-lineHighlightBackground,rgba(128,128,128,.08)));
+      border:1px solid var(--vscode-panel-border,rgba(128,128,128,.15));
+      margin-right:20px;border-bottom-left-radius:3px;
+    }
+    .message.error-msg{
+      background:var(--vscode-inputValidation-errorBackground,rgba(220,38,38,.12));
+      border:1px solid var(--vscode-inputValidation-errorBorder,rgba(220,38,38,.4));
+      margin-right:20px;border-bottom-left-radius:3px;
+    }
+    .message .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;opacity:.5}
+    .message.user .label{opacity:.7}
+
+    /* Markdown */
+    .message pre{position:relative;background:var(--vscode-textCodeBlock-background,rgba(0,0,0,.2));padding:10px;border-radius:6px;overflow-x:auto;margin:8px 0;font-size:12px}
+    .message code{font-family:var(--vscode-editor-font-family,'Fira Code',monospace);font-size:12px}
+    .message p{margin:4px 0}.message ul,.message ol{padding-left:18px;margin:4px 0}
+    .message a{color:var(--vscode-textLink-foreground,#6ea8fe)}
+    .message blockquote{border-left:3px solid var(--vscode-textBlockQuote-border,rgba(128,128,128,.3));padding-left:10px;margin:6px 0;opacity:.85}
+
+    /* Copy button on code blocks */
+    .copy-code-btn{
+      position:absolute;top:4px;right:4px;
+      background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.3));
+      color:var(--vscode-button-secondaryForeground,var(--vscode-editor-foreground));
+      border:none;border-radius:3px;padding:2px 7px;font-size:10px;cursor:pointer;
+      opacity:0;transition:opacity .15s;
+    }
+    .message pre:hover .copy-code-btn{opacity:1}
+    .copy-code-btn:hover{background:var(--vscode-button-secondaryHoverBackground,rgba(128,128,128,.5))}
+
+    /* Regenerate button */
+    .regen-btn{
+      display:inline-flex;align-items:center;gap:3px;
+      background:transparent;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.2));
+      color:var(--vscode-editor-foreground);opacity:.55;
+      padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;
+      margin-top:6px;transition:opacity .15s;
+    }
+    .regen-btn:hover{opacity:1}
+
+    /* Set API Key button (in errors) */
+    .set-key-btn{
+      display:inline-block;margin-top:8px;
+      padding:5px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;
+      background:var(--vscode-button-background,#4f46e5);
+      color:var(--vscode-button-foreground,#fff);border:none;transition:opacity .15s;
+    }
+    .set-key-btn:hover{opacity:.85}
+
+    /* ── Loading ── */
+    #loading{display:none;padding:6px 12px;font-size:12px;opacity:.6;align-items:center;gap:8px}
+    #loading.visible{display:flex}
+    .typing-dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--vscode-editor-foreground);animation:bounce .6s infinite alternate;margin-right:3px}
+    .typing-dots span:nth-child(2){animation-delay:.2s}
+    .typing-dots span:nth-child(3){animation-delay:.4s}
+    @keyframes bounce{to{opacity:.2;transform:translateY(-4px)}}
+
+    /* ── Image preview ── */
+    #image-preview{display:none;padding:4px 12px;flex-shrink:0;gap:6px;flex-wrap:wrap;align-items:center}
+    #image-preview.has-images{display:flex}
+    .img-thumb{position:relative;width:48px;height:48px;border-radius:4px;overflow:hidden;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.2))}
+    .img-thumb img{width:100%;height:100%;object-fit:cover}
+    .img-thumb .remove-img{position:absolute;top:-2px;right:-2px;background:var(--vscode-errorForeground,#e53e3e);color:#fff;border:none;border-radius:50%;width:14px;height:14px;font-size:9px;cursor:pointer;line-height:14px;text-align:center}
+
+    /* ── Input area ── */
+    #input-area{
+      display:flex;gap:6px;padding:8px 12px;flex-shrink:0;align-items:center;
+      border-top:1px solid var(--vscode-panel-border,rgba(128,128,128,.2));
+      background:var(--vscode-editor-background);
+    }
+    #input{
+      flex:1;padding:8px 10px;
+      background:var(--vscode-input-background);color:var(--vscode-input-foreground);
+      border:1px solid var(--vscode-input-border,rgba(128,128,128,.2));
+      border-radius:6px;outline:none;font-size:13px;font-family:inherit;
+      transition:border-color .15s;
+    }
+    #input:focus{border-color:var(--vscode-focusBorder,#6366f1)}
+    #input::placeholder{color:var(--vscode-input-placeholderForeground,rgba(128,128,128,.5))}
+
+    .icon-btn{
+      background:transparent;border:none;color:var(--vscode-editor-foreground);
+      cursor:pointer;padding:4px;border-radius:4px;font-size:16px;opacity:.6;transition:opacity .15s;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .icon-btn:hover{opacity:1;background:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,.15))}
+
+    #send-btn{
+      padding:7px 14px;
+      background:var(--vscode-button-background);color:var(--vscode-button-foreground,#fff);
+      border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;
+      transition:opacity .15s;
+    }
+    #send-btn:hover{opacity:.85}
+    #send-btn:disabled{opacity:.4;cursor:not-allowed}
+
+    /* hidden file input */
+    #image-input{display:none}
+
+    /* ── Footer ── */
+    #footer{text-align:center;font-size:10px;opacity:.3;padding:4px 0 6px;flex-shrink:0;letter-spacing:.3px}
+
+    /* ── Toast ── */
+    #toast{
+      position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+      background:var(--vscode-button-background,#4f46e5);color:var(--vscode-button-foreground,#fff);
+      padding:5px 16px;border-radius:5px;font-size:12px;opacity:0;
+      transition:opacity .2s;pointer-events:none;z-index:99;
+    }
+    #toast.show{opacity:1}
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <div id="header">
+    <div class="header-left">
+      <span class="dot"></span>
+      <span class="brand">VSGrok</span>
+    </div>
+    <div class="header-right">
+      <select id="model-select" class="h-select" title="Model">
+        <option value="grok-4-0414">grok-4-0414</option>
+        <option value="grok-4-0414-non-reasoning">grok-4-0414 (non-reasoning)</option>
+        <option value="grok-3-mini-fast-beta">grok-3-mini-fast</option>
+        <option value="grok-3-fast-beta">grok-3-fast</option>
+      </select>
+      <button id="settings-btn" class="h-btn" title="Temperature &amp; Max Tokens">⚙</button>
+      <button id="clear-btn" class="h-btn" title="Clear conversation (Ctrl+Shift+K)">✕</button>
+    </div>
+  </div>
+
+  <!-- ── Settings panel ── -->
+  <div id="settings-panel">
+    <div class="slider-row">
+      <label>Temperature</label>
+      <input type="range" id="temp-slider" min="0" max="2" step="0.05" value="0.7" />
+      <span class="val" id="temp-val">0.70</span>
+    </div>
+    <div class="slider-row">
+      <label>Max Tokens</label>
+      <input type="range" id="tokens-slider" min="256" max="16384" step="256" value="4096" />
+      <span class="val" id="tokens-val">4096</span>
+    </div>
+  </div>
+
+  <!-- ── Messages ── -->
+  <div id="messages"></div>
+
+  <!-- ── Loading ── -->
+  <div id="loading">
+    <div class="typing-dots"><span></span><span></span><span></span></div>
+    <span>Grok is thinking…</span>
+  </div>
+
+  <!-- ── Image preview ── -->
+  <div id="image-preview"></div>
+
+  <!-- ── Input area ── -->
+  <div id="input-area">
+    <button id="upload-btn" class="icon-btn" title="Attach image (Grok Vision)">📎</button>
+    <input id="image-input" type="file" accept="image/*" multiple />
+    <input id="input" type="text" placeholder="Ask Grok… (@file @workspace)" autocomplete="off" />
+    <button id="send-btn" title="Send (Enter)">Send</button>
+  </div>
+
+  <div id="footer">Powered by Grok · xAI</div>
+  <div id="toast"></div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    const $ = id => document.getElementById(id);
+    const messagesDiv = $('messages');
+    const input = $('input');
+    const sendBtn = $('send-btn');
+    const clearBtn = $('clear-btn');
+    const loadingDiv = $('loading');
+    const settingsBtn = $('settings-btn');
+    const settingsPanel = $('settings-panel');
+    const modelSelect = $('model-select');
+    const tempSlider = $('temp-slider');
+    const tempVal = $('temp-val');
+    const tokensSlider = $('tokens-slider');
+    const tokensVal = $('tokens-val');
+    const uploadBtn = $('upload-btn');
+    const imageInput = $('image-input');
+    const imagePreview = $('image-preview');
+    const toastEl = $('toast');
+
+    let streamingRaw = '';
+    let streamEl = null;
+    let isBusy = false;
+    let pendingImages = [];
+
+    /* ── Helpers ── */
+    function scrollToBottom() { messagesDiv.scrollTop = messagesDiv.scrollHeight; }
+    function renderMarkdown(text) { try { return marked.parse(text); } catch { return text; } }
+    function toast(msg, ms) {
+      ms = ms || 1500;
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      setTimeout(function() { toastEl.classList.remove('show'); }, ms);
+    }
+    function setBusy(busy) {
+      isBusy = busy;
+      sendBtn.disabled = busy;
+      loadingDiv.classList.toggle('visible', busy);
+    }
+    function pushSettings() {
+      vscode.postMessage({
+        command: 'updateSettings',
+        model: modelSelect.value,
+        temperature: parseFloat(tempSlider.value),
+        maxTokens: parseInt(tokensSlider.value, 10),
+      });
+    }
+
+    /* ── Copy buttons on code blocks ── */
+    function addCopyButtons(container) {
+      container.querySelectorAll('pre').forEach(function(pre) {
+        if (pre.querySelector('.copy-code-btn')) return;
+        var btn = document.createElement('button');
+        btn.className = 'copy-code-btn';
+        btn.textContent = 'Copy';
+        btn.onclick = function() {
+          var code = pre.querySelector('code');
+          var text = code ? code.textContent : pre.textContent;
+          navigator.clipboard.writeText(text).then(function() {
+            btn.textContent = 'Copied!';
+            toast('Copied to clipboard');
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+          });
+        };
+        pre.appendChild(btn);
+      });
+    }
+
+    /* ── Create message ── */
+    function addMessage(role, html, extraClass) {
+      var wrapper = document.createElement('div');
+      wrapper.className = 'message ' + role + (extraClass ? ' ' + extraClass : '');
+      var label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = role === 'user' ? 'You' : (role === 'error-msg' ? '⚠ Error' : 'Grok');
+      wrapper.appendChild(label);
+      var body = document.createElement('div');
+      body.className = 'msg-body';
+      body.innerHTML = html;
+      wrapper.appendChild(body);
+      messagesDiv.appendChild(wrapper);
+      addCopyButtons(body);
+      scrollToBottom();
+      return wrapper;
+    }
+
+    /* ── Regenerate button ── */
+    function addRegenButton(wrapper) {
+      var btn = document.createElement('button');
+      btn.className = 'regen-btn';
+      btn.innerHTML = '↻ Regenerate';
+      btn.title = 'Regenerate this response';
+      btn.onclick = function() {
+        wrapper.remove();
+        vscode.postMessage({ command: 'regenerate' });
+      };
+      wrapper.appendChild(btn);
+    }
+
+    /* ── Settings panel toggle ── */
+    settingsBtn.onclick = function() {
+      settingsPanel.classList.toggle('open');
+      settingsBtn.classList.toggle('active');
+    };
+    tempSlider.oninput = function() { tempVal.textContent = parseFloat(tempSlider.value).toFixed(2); pushSettings(); };
+    tokensSlider.oninput = function() { tokensVal.textContent = tokensSlider.value; pushSettings(); };
+    modelSelect.onchange = function() { pushSettings(); };
+
+    /* ── Image upload ── */
+    uploadBtn.onclick = function() { imageInput.click(); };
+    imageInput.onchange = function() {
+      for (var i = 0; i < imageInput.files.length; i++) {
+        (function(file) {
+          var reader = new FileReader();
+          reader.onload = function() { pendingImages.push(reader.result); renderImagePreviews(); };
+          reader.readAsDataURL(file);
+        })(imageInput.files[i]);
+      }
+      imageInput.value = '';
+    };
+
+    /* Drag & drop */
+    var inputArea = $('input-area');
+    inputArea.addEventListener('dragover', function(e) { e.preventDefault(); inputArea.style.outline = '2px dashed var(--vscode-focusBorder,#6366f1)'; });
+    inputArea.addEventListener('dragleave', function() { inputArea.style.outline = 'none'; });
+    inputArea.addEventListener('drop', function(e) {
+      e.preventDefault();
+      inputArea.style.outline = 'none';
+      for (var i = 0; i < e.dataTransfer.files.length; i++) {
+        var file = e.dataTransfer.files[i];
+        if (!file.type.startsWith('image/')) continue;
+        (function(f) {
+          var reader = new FileReader();
+          reader.onload = function() { pendingImages.push(reader.result); renderImagePreviews(); };
+          reader.readAsDataURL(f);
+        })(file);
+      }
+    });
+
+    function renderImagePreviews() {
+      imagePreview.innerHTML = '';
+      imagePreview.classList.toggle('has-images', pendingImages.length > 0);
+      pendingImages.forEach(function(src, i) {
+        var thumb = document.createElement('div');
+        thumb.className = 'img-thumb';
+        var img = document.createElement('img');
+        img.src = src;
+        thumb.appendChild(img);
+        var rm = document.createElement('button');
+        rm.className = 'remove-img';
+        rm.title = 'Remove';
+        rm.textContent = '✕';
+        rm.onclick = function() { pendingImages.splice(i, 1); renderImagePreviews(); };
+        thumb.appendChild(rm);
+        imagePreview.appendChild(thumb);
+      });
+    }
+
+    /* ── Send ── */
+    sendBtn.onclick = function() {
+      var text = input.value.trim();
+      if ((!text && !pendingImages.length) || isBusy) return;
+      var msg = { command: 'query', text: text || '(image attached)' };
+      if (pendingImages.length) { msg.images = pendingImages.slice(); }
+      vscode.postMessage(msg);
+      input.value = '';
+      pendingImages = [];
+      renderImagePreviews();
+      input.focus();
+    };
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); } });
+
+    /* ── Clear chat ── */
+    clearBtn.onclick = function() { vscode.postMessage({ command: 'clearChat' }); };
+    document.addEventListener('keydown', function(e) {
+      if (e.ctrlKey && e.shiftKey && e.key === 'K') { clearBtn.click(); }
+    });
+
+    /* ── Message handler ── */
+    window.addEventListener('message', function(event) {
+      var msg = event.data;
+      switch (msg.command) {
+        case 'userMessage':
+          addMessage('user', renderMarkdown(msg.content));
+          input.focus();
+          break;
+
+        case 'loading':
+          setBusy(msg.visible);
+          break;
+
+        case 'streamStart':
+          streamingRaw = '';
+          streamEl = addMessage('assistant', '');
+          break;
+
+        case 'stream':
+          streamingRaw += msg.chunk;
+          var bodyEl = streamEl ? streamEl.querySelector('.msg-body') : null;
+          if (bodyEl) { bodyEl.innerHTML = renderMarkdown(streamingRaw); }
+          scrollToBottom();
+          break;
+
+        case 'streamEnd':
+          var finalBody = streamEl ? streamEl.querySelector('.msg-body') : null;
+          if (finalBody) {
+            finalBody.innerHTML = renderMarkdown(msg.content);
+            addCopyButtons(finalBody);
+          }
+          if (streamEl) { addRegenButton(streamEl); }
+          streamEl = null;
+          streamingRaw = '';
+          scrollToBottom();
+          input.focus();
+          break;
+
+        case 'response':
+          var w1 = addMessage('assistant', renderMarkdown(msg.content));
+          addRegenButton(w1);
+          input.focus();
+          break;
+
+        case 'error':
+          var errHtml = renderMarkdown(msg.content);
+          if (msg.kind === 'auth' || msg.kind === 'missing_key') {
+            errHtml += '<br/><button class="set-key-btn" onclick="vscode.postMessage({command:\'setApiKey\'})">🔑 Set API Key</button>';
+          }
+          addMessage('error-msg', errHtml, 'error-msg');
+          input.focus();
+          break;
+
+        case 'chatCleared':
+          messagesDiv.innerHTML = '';
+          input.focus();
+          break;
+      }
+    });
+
+    /* ── Init ── */
+    pushSettings();
+    input.focus();
+  </script>
+</body>
+</html>

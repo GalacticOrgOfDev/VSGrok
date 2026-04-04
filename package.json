@@ -1,0 +1,127 @@
+{
+  "name": "vsgrok",
+  "displayName": "VSGrok",
+  "description": "A premium AI coding agent powered by Grok (xAI) — chat, explain, fix, comment, and test code directly in VSCode.",
+  "version": "0.1.0",
+  "icon": "media/Grok-Icon.png",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onView:VSGrokView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vsgrok.query",
+        "title": "VSGrok: Ask Query"
+      },
+      {
+        "command": "vsgrok.explainCode",
+        "title": "VSGrok: Explain Code"
+      },
+      {
+        "command": "vsgrok.fixCode",
+        "title": "VSGrok: Fix Code"
+      },
+      {
+        "command": "vsgrok.addComments",
+        "title": "VSGrok: Add Comments"
+      },
+      {
+        "command": "vsgrok.writeTests",
+        "title": "VSGrok: Write Tests"
+      },
+      {
+        "command": "vsgrok.setApiKey",
+        "title": "VSGrok: Set API Key"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "vsgrok.explainCode",
+          "when": "editorHasSelection",
+          "group": "vsgrok@1"
+        },
+        {
+          "command": "vsgrok.fixCode",
+          "when": "editorHasSelection",
+          "group": "vsgrok@2"
+        },
+        {
+          "command": "vsgrok.addComments",
+          "when": "editorHasSelection",
+          "group": "vsgrok@3"
+        },
+        {
+          "command": "vsgrok.writeTests",
+          "when": "editorHasSelection",
+          "group": "vsgrok@4"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsgrok-sidebar",
+          "title": "VSGrok Agent",
+          "icon": "media/grok-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vsgrok-sidebar": [
+        {
+          "id": "VSGrokView",
+          "name": "VSGrok Chat",
+          "type": "webview",
+          "icon": "media/grok-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "VSGrokPanelView",
+          "name": "VSGrok Chat",
+          "type": "webview",
+          "icon": "media/grok-icon.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "pnpm run check-types && pnpm run lint && node esbuild.mjs",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.mjs --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "pnpm run check-types && pnpm run lint && node esbuild.mjs --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.105.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.3",
+    "eslint": "^10.0.2",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "marked": "^17.0.0"
+  }
+}
