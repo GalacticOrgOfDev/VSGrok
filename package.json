@@ -84,14 +84,6 @@
           "type": "webview",
           "icon": "media/grok-icon.svg"
         }
-      ],
-      "panel": [
-        {
-          "id": "VSGrokPanelView",
-          "name": "VSGrok Chat",
-          "type": "webview",
-          "icon": "media/grok-icon.svg"
-        }
       ]
     }
   },

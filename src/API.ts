@@ -32,7 +32,7 @@ export interface GrokRequestOptions {
 
 // ── Error codes that mean "bad/missing key" ────────────────────────────────────
 
-export type ApiErrorKind = 'auth' | 'rate_limit' | 'missing_key' | 'generic';
+export type ApiErrorKind = 'auth' | 'rate_limit' | 'missing_key' | 'quota_exceeded' | 'context_length' | 'generic';
 
 export class GrokApiError extends Error {
   public readonly kind: ApiErrorKind;
@@ -70,22 +70,62 @@ function buildPayload(messages: ChatMessage[], options: GrokRequestOptions) {
 }
 
 function classifyHttpError(status: number, body: string): GrokApiError {
+  let parsedError: { error?: { message?: string } } | null = null;
+
+  try {
+    const json = JSON.parse(body);
+    if (json && typeof json === 'object') {
+      parsedError = json as { error?: { message?: string } };
+    }
+  } catch {
+    // Not JSON → use raw body below
+  }
+
+  const errorMsg = (parsedError?.error?.message || body || '').toLowerCase();
+
+  // 401/403 can mean either bad key OR out of credits (xAI often uses 403 for quota issues)
   if (status === 401 || status === 403) {
+    if (
+      errorMsg.includes('credit') ||
+      errorMsg.includes('balance') ||
+      errorMsg.includes('quota') ||
+      errorMsg.includes('insufficient') ||
+      errorMsg.includes('exceeded')
+    ) {
+      return new GrokApiError(
+        `Out of credits or quota reached (${status}).\n\nGo to https://grok.x.ai and add more credits to keep chatting.`,
+        'quota_exceeded',
+        status
+      );
+    }
     return new GrokApiError(
-      `Authentication failed (${status}). Your API key may be invalid or expired.`,
+      `Authentication failed (${status}). Your API key may be invalid or expired. Run "VSGrok: Set API Key" to update it.`,
       'auth',
       status
     );
   }
-  if (status === 429) {
+
+  // Rate limit
+  if (status === 429 || errorMsg.includes('rate limit')) {
     return new GrokApiError(
-      `Rate limited (${status}). You've exceeded your xAI API quota. Please wait and try again.`,
+      `Rate limited (${status}). You've exceeded your xAI API quota for now. Wait a minute and try again.`,
       'rate_limit',
       status
     );
   }
+
+  // Context window too big
+  if (status === 400 && (errorMsg.includes('context') || errorMsg.includes('length') || errorMsg.includes('tokens'))) {
+    return new GrokApiError(
+      `Message too long for the current context window (${status}). Try a shorter question or start a new chat.`,
+      'context_length',
+      status
+    );
+  }
+
+  // Everything else
   return new GrokApiError(
-    `xAI API error (${status}): ${body || 'Unknown error'}`,
+    `xAI API error (${status}): ${parsedError?.error?.message || body || 'Unknown error'}`,
     'generic',
     status
   );
