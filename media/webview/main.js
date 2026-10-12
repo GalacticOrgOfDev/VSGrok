@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const messagesEl = $('messages'), input = $('input'), sendBtn = $('send'), chipsEl = $('chips');
   const pill = $('new-output'), announce = $('sr-announce');
-  const state = { streaming: null, hasEditor: false, editorPath: undefined, chips: [], chipsExpanded: false };
+  const state = { streaming: null, hasEditor: false, editorPath: undefined, chips: [], chipsExpanded: false, images: [] };
   const turns = new Map(); // id -> {el, body, raw, timer, state}
 
   marked.setOptions({ gfm: true, breaks: false });
@@ -110,7 +110,15 @@
     chipsEl.innerHTML = '';
     const list = state.chips;
     const pv = VSGrokCards.problemsChip(state.problems ? state.problems.count : 0, state.problems ? state.problems.enabled : true);
-    chipsEl.hidden = list.length === 0 && pv.hidden;
+    const imgs = state.images || [];
+    chipsEl.hidden = list.length === 0 && pv.hidden && !imgs.length;
+    imgs.forEach((im, i) => {
+      const b = document.createElement('span'); b.className = 'chip image-chip'; b.title = im.name;
+      const th = document.createElement('img'); th.src = im.dataUrl; th.alt = 'Image ' + (i + 1) + ': ' + im.name; th.width = 28; th.height = 28;
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'chip-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove image ' + (i + 1) + ' (' + im.name + ')');
+      x.addEventListener('click', () => { state.images = state.images.filter((o) => o.id !== im.id); renderChips(); input.focus(); });
+      b.append(th, x); chipsEl.appendChild(b);
+    });
     if (!pv.hidden) {
       const pc = document.createElement('button'); pc.type = 'button'; pc.className = 'chip problems-chip' + (state.problems.enabled ? '' : ' off');
       const gl = document.createElement('span'); gl.className = 'chip-glyph'; gl.textContent = pv.glyph; gl.setAttribute('aria-hidden', 'true');
@@ -128,9 +136,14 @@
     }
   }
 
-  function addUser(text, chips) {
+  function addUser(text, chips, images) {
     const el = document.createElement('div'); el.className = 'message user';
     const t = document.createElement('div'); t.className = 'user-text'; t.textContent = text; el.appendChild(t);
+    if (images && images.length) {
+      const row = document.createElement('div'); row.className = 'user-images';
+      images.forEach((u, i) => { if (/^data:image\/(png|jpeg);base64,/.test(u)) { const im = document.createElement('img'); im.src = u; im.alt = 'Attached image ' + (i + 1); row.appendChild(im); } });
+      el.appendChild(row);
+    }
     if (chips && chips.length) { const row = document.createElement('div'); row.className = 'mini-chips'; chips.forEach((c) => row.appendChild(chipEl(c, false))); el.appendChild(row); }
     messagesEl.appendChild(el); messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -217,10 +230,51 @@
   function send() {
     if (state.streaming) { return; }
     const text = input.value.trim();
-    if (!text) { return; }
-    vscode.postMessage({ type: 'query', text });
+    const imgs = state.images.map((i) => i.dataUrl);
+    if (!text && !imgs.length) { return; }
+    vscode.postMessage(imgs.length ? { type: 'query', text: text || 'What is in this image?', images: imgs } : { type: 'query', text });
     input.value = ''; autoGrow();
   }
+  // ---- image input: paste, drop, Attach image; downscaled here, sent as PNG/JPEG data URLs ----
+
+  let imgSeq = 0;
+  function loadImage(src) { return new Promise((ok, fail) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => fail(new Error('not a readable image')); im.src = src; }); }
+  function readFile(f) { return new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => fail(r.error); r.readAsDataURL(f); }); }
+  async function normalizeImage(dataUrl) {
+    const mime = (/^data:([\w/+.-]+);/.exec(dataUrl) || [])[1] || '';
+    const im = await loadImage(dataUrl);
+    const w = im.naturalWidth, h = im.naturalHeight;
+    if (VSGrokCards.keepOriginal(mime, VSGrokCards.dataUrlBytes(dataUrl), w, h)) { return dataUrl; }
+    const sz = VSGrokCards.fitSize(w, h);
+    const c = document.createElement('canvas'); c.width = sz.w; c.height = sz.h;
+    const g = c.getContext('2d'); if (!g) { throw new Error('canvas unavailable'); }
+    if (mime !== 'image/png') { g.fillStyle = '#fff'; g.fillRect(0, 0, sz.w, sz.h); }
+    g.drawImage(im, 0, 0, sz.w, sz.h);
+    if (mime === 'image/png') { const p = c.toDataURL('image/png'); if (VSGrokCards.dataUrlBytes(p) <= VSGrokCards.IMG.BYTES) { return p; } g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, sz.w, sz.h); }
+    for (const q of [0.85, 0.7, 0.55, 0.4]) { const j = c.toDataURL('image/jpeg', q); if (VSGrokCards.dataUrlBytes(j) <= VSGrokCards.IMG.BYTES) { return j; } }
+    throw new Error('image too large even after compression');
+  }
+  async function addImages(sources) {
+    const room = VSGrokCards.imageRoom(state.images.length, sources.length);
+    if (room.dropped) { toast('Up to ' + VSGrokCards.IMG.MAX + ' images per message; ' + room.dropped + ' not added.'); }
+    for (const src of sources.slice(0, room.take)) {
+      try {
+        const raw = typeof src.dataUrl === 'string' ? src.dataUrl : await readFile(src.file);
+        const dataUrl = await normalizeImage(raw);
+        state.images.push({ id: 'img' + (++imgSeq), dataUrl, name: src.name || 'image' });
+      } catch (err) { toast('Couldn\'t attach ' + (src.name || 'image') + ': ' + (err && err.message ? err.message : err)); }
+    }
+    renderChips();
+  }
+  function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.setAttribute('role', 'status'); d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); }
+  input.addEventListener('paste', (e) => {
+    const items = e.clipboardData ? [...e.clipboardData.items] : [];
+    const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+    if (!files.length) { return; }
+    e.preventDefault();
+    void addImages(files.map((f) => ({ file: f, name: f.name || 'pasted image' })));
+  });
+  $('attach-image').addEventListener('click', () => vscode.postMessage({ type: 'pickImage' }));
   function autoGrow() {
     input.style.height = 'auto';
     const lh = parseFloat(getComputedStyle(input).lineHeight) || 18;
@@ -277,7 +331,10 @@
     const dt = e.dataTransfer; if (!dt) { return; }
     const raw = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') || dt.getData('text/plain');
     const uris = raw.split(/\r?\n/).map((s) => s.trim()).filter((s) => /^[a-z][\w+.-]*:/i.test(s));
-    if (uris.length) { vscode.postMessage({ type: 'dropFiles', uris }); }
+    if (uris.length) { vscode.postMessage({ type: 'dropFiles', uris }); return; }
+    // Files dragged from the OS (no workspace path): only images are accepted, read here.
+    const files = dt.files ? [...dt.files].filter((f) => /^image\//.test(f.type)) : [];
+    if (files.length) { void addImages(files.map((f) => ({ file: f, name: f.name }))); }
   });
 
 
@@ -489,7 +546,23 @@
         setToggle('web-toggle', m.webSearch, m.api === 'chat'); setToggle('x-toggle', m.xSearch, m.api === 'chat'); break;
       case 'models': setModelOptions(m.models || [], m.current); modelIn.title = 'Grok model' + (m.source === 'fallback' ? ' (built-in list: ' + (m.error || 'offline') + ')' : m.source === 'live' ? ' (live from xAI)' : ''); break;
       case 'keyState': $('welcome').hidden = !!m.hasKey; document.body.classList.toggle('no-key', !m.hasKey); break;
-      case 'userMessage': addUser(m.text, m.chips); break;
+      case 'userMessage': addUser(m.text, m.chips, m.images); if (m.images && m.images.length) { state.images = []; renderChips(); } break;
+      case 'imageFile': if (typeof m.dataUrl === 'string') { void addImages([{ dataUrl: m.dataUrl, name: String(m.name || 'image') }]); } break;
+      case 'imagesRefused': toast('Image not attached: ' + (m.reasons || []).map(String).join('; ')); break;
+      case 'visionNote': {
+        const v = VSGrokCards.visionNote(String(m.model), m.suggest ? String(m.suggest) : '');
+        const btns = [];
+        if (m.suggest) { btns.push({ label: v.action, action: 'switch', primary: true, fn: (b, c) => { b.disabled = true; currentModel = String(m.suggest); setModelOptions([...modelIn.options].map((o) => ({ id: o.value })), currentModel); vscode.postMessage({ type: 'updateSettings', model: currentModel }); c.querySelector('.approval-status').textContent = 'Switched to ' + currentModel + '. Press Send to try again.'; input.focus(); } }); }
+        btns.push({ label: 'Remove images', action: 'remove', primary: false, fn: (b, c) => { b.disabled = true; state.images = []; renderChips(); c.querySelector('.approval-status').textContent = 'Images removed.'; } });
+        const card = infoCard('vision-note', v.title, [v.body], btns); card.dataset.kind = 'command';
+        announce.textContent = v.title;
+        break;
+      }
+      case 'costMeter': {
+        const el = $('cost-meter'); el.hidden = !!m.hidden; el.textContent = m.text || ''; el.title = m.tooltip || '';
+        el.setAttribute('aria-label', m.hidden ? '' : 'Chat usage: ' + m.text);
+        break;
+      }
       case 'streamStart': startTurn(m.id); break;
       case 'streamChunk': { const t = turns.get(m.id); if (t && t.state === 'streaming') { t.raw += m.delta; scheduleRender(t); } break; }
       case 'toolEvent': {

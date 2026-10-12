@@ -82,5 +82,22 @@
   /** Tri-state for the plan card's Select all box. */
   function selectAllState(checked, total) { return { checked: total > 0 && checked === total, indeterminate: checked > 0 && checked < total }; }
 
-  return { ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
+  // ---- images ----
+  const IMG = { MAX: 8, SIDE: 2048, BYTES: 4 * 1024 * 1024 };
+  /** Scale (w,h) so the long side is at most max. */
+  function fitSize(w, h, max) {
+    max = max || IMG.SIDE; const k = Math.max(w, h) > max ? max / Math.max(w, h) : 1;
+    return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)), scaled: k < 1 };
+  }
+  /** Bytes encoded in a base64 data URL. */
+  function dataUrlBytes(u) { const i = String(u).indexOf(','); const b = i < 0 ? '' : String(u).slice(i + 1); return Math.floor(b.length * 3 / 4) - (b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0); }
+  /** Can a source data URL be sent as-is (already PNG/JPEG, small enough, not oversized)? */
+  function keepOriginal(mime, bytes, w, h) { return (mime === 'image/png' || mime === 'image/jpeg') && bytes <= IMG.BYTES && Math.max(w, h) <= IMG.SIDE; }
+  /** Room left for images (count cap). */
+  function imageRoom(current, adding) { const room = Math.max(0, IMG.MAX - current); return { take: Math.min(room, adding), dropped: Math.max(0, adding - room) }; }
+  function visionNote(model, suggest) {
+    return { title: '🖼 ' + model + ' can\'t read images', body: suggest ? 'Switch to ' + suggest + ' (accepts image input) and press Send again. Your images stay attached.' : 'None of your available models report image input. Remove the images to send text only.', action: suggest ? 'Switch to ' + suggest : '' };
+  }
+
+  return { IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
 });

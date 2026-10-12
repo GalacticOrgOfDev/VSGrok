@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"

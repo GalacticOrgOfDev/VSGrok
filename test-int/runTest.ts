@@ -14,8 +14,34 @@ async function main() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ tag_name: 'v99.0.0', html_url: base + '/rel', body: 'mock', draft: false, prerelease: false,
         assets: [{ name: 'vsgrok-99.0.0.vsix', browser_download_url: base + '/dl/vsgrok-99.0.0.vsix' }] }));
+    } else if (req.url?.startsWith('/xai/')) {
+      mockXai(req, res);
     } else { res.writeHead(404); res.end(); }
   });
+  // Mock xAI API for image input + cost meter tests. Records request bodies at /xai/requests.
+  const xaiRequests: unknown[] = [];
+  function mockXai(req: http.IncomingMessage, res: http.ServerResponse) {
+    const url = req.url!.replace(/^\/xai\/v1/, '');
+    if (req.url === '/xai/requests') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(xaiRequests)); return; }
+    if (url === '/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-vision', created: 2 }, { id: 'mock-text', created: 1 }] })); return; }
+    if (url === '/language-models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ models: [{ id: 'mock-vision', input_modalities: ['text', 'image'] }, { id: 'mock-text', input_modalities: ['text'] }] })); return; }
+    if (url === '/responses' && req.method === 'POST') {
+      let body = ''; req.on('data', d => (body += d)); req.on('end', () => {
+        try { xaiRequests.push(JSON.parse(body)); } catch { xaiRequests.push(body); }
+        const n = xaiRequests.length;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        const msg = { type: 'message', id: `msg_${n}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'A red square.', annotations: [] }] };
+        const ev = [
+          { type: 'response.output_text.delta', item_id: msg.id, output_index: 0, content_index: 0, delta: 'A red square.' },
+          { type: 'response.completed', response: { id: `resp_${n}`, status: 'completed', output: [msg], usage: { input_tokens: 1000 * n, output_tokens: 50, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 10 }, cost_in_usd_ticks: 123_000_000 } } },
+        ];
+        for (const e of ev) { res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`); }
+        res.end();
+      });
+      return;
+    }
+    res.writeHead(404); res.end();
+  }
   await new Promise<void>(r => srv.listen(0, '127.0.0.1', () => r()));
   const port = (srv.address() as AddressInfo).port;
   // Copy the fixture so the index/rules tests can't dirty the repo.
@@ -41,7 +67,7 @@ async function main() {
       extensionDevelopmentPath: root,
       extensionTestsPath: path.join(__dirname, 'suite', 'index'),
       launchArgs: [ws, ...(process.env.VSGROK_LIVE_UPDATE === '1' ? [] : ['--disable-extensions']), '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes'],
-      extensionTestsEnv: { VSGROK_TEST: '1', VSGROK_TEST_OUTDIR: outDir, VSGROK_TEST_RELEASES_URL: `http://127.0.0.1:${port}/latest`, VSGROK_LIVE_UPDATE: process.env.VSGROK_LIVE_UPDATE ?? '' },
+      extensionTestsEnv: { VSGROK_TEST: '1', VSGROK_TEST_OUTDIR: outDir, VSGROK_TEST_RELEASES_URL: `http://127.0.0.1:${port}/latest`, VSGROK_TEST_XAI: `http://127.0.0.1:${port}/xai`, VSGROK_LIVE_UPDATE: process.env.VSGROK_LIVE_UPDATE ?? '' },
     });
   } catch (e) {
     console.error('Integration tests failed', e);

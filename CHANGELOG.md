@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0 — 2026-10-12
+**Image input**
+- Add images in three ways: paste a screenshot into the chat input (`Ctrl+V`), drop image files (from the Explorer, or from the OS), or click **🖼 Attach image**. Images show as removable thumbnail chips before sending, and the sent message shows them too.
+- Sent to the Responses API as `input_image` items with a base64 `data:` URL ([image understanding](https://docs.x.ai/developers/model-capabilities/images/understanding): JPG/PNG, up to 20 MiB each).
+  - The webview downscales to 2048 px on the long side and recompresses (PNG kept when small, otherwise JPEG) to stay under about 4 MB. GIF, WebP and BMP are converted.
+  - Up to 8 images per message.
+  - The extension re-validates every image: PNG or JPEG only, magic bytes must match the type, at most 20 MiB.
+- Chats that contain images switch to `store: false` with full-history resend, as xAI advises for image requests.
+- Vision check: image support is read from `GET /v1/language-models` (`input_modalities`). If the selected model doesn't accept images, an in-chat note offers **Switch to <vision model>** or **Remove images**, and nothing is sent. Models whose support is unknown are allowed.
+- Images dropped from the Explorer follow the workspace and secret-file rules, like other dropped files. **Attach image** accepts files you pick anywhere, except secret-looking names. The content security policy is unchanged (`img-src` already allowed `data:`); `blob:` is not added.
+
+**Per-chat cost meter**
+- A running total in the header (e.g. "12k tok · $0.025") built from the usage xAI returns. The tooltip breaks down turns, input (cached), output (reasoning) and cost.
+- Cost is shown only when the API reports it (`usage.cost_in_usd_ticks`); prices are never estimated. If no turn reported a cost, the meter shows tokens only. A "+" means some turns had no reported cost.
+- Resets on **New chat**.
+
+**Docs**
+- `docs/DEMO.md`: a step-by-step recording script that builds a small terminal colour-palette CLI from an empty folder. It covers the plan card, tests, a fix, image input, X Search and the cost meter.
+
 ## 0.7.1 — 2026-10-12
 **Security and correctness review (JGrok)**
 - **H1:** plan create and rename targets are checked with a new `checkWritable`. It resolves the nearest existing parent directory through symlinks, which must stay inside the workspace, and refuses secret-looking results. A directory symlink can no longer route a write outside the workspace.

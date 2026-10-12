@@ -29,14 +29,14 @@ export interface ResponsesLoopOptions {
 
 export interface ResponsesLoopResult {
   steps: number; toolCalls: number; hitStepCap: boolean; finalText: string;
-  outputTokens: number; reasoningTokens: number; cachedTokens: number; lastInputTokens: number; costTicks: number;
+  outputTokens: number; reasoningTokens: number; cachedTokens: number; lastInputTokens: number; costTicks: number; inputTokens: number; costMissing: number;
   citations: { url: string; title?: string }[];
 }
 
 export async function runResponsesLoop(o: ResponsesLoopOptions): Promise<ResponsesLoopResult> {
   const s = o.state;
   s.items.push(...o.newInput);
-  const acc: ResponsesLoopResult = { steps: 0, toolCalls: 0, hitStepCap: false, finalText: '', outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, lastInputTokens: 0, costTicks: 0, citations: [] };
+  const acc: ResponsesLoopResult = { steps: 0, toolCalls: 0, hitStepCap: false, finalText: '', outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, lastInputTokens: 0, costTicks: 0, inputTokens: 0, costMissing: 0, citations: [] };
   const seen = new Set<string>();
 
   const send = async (pending: InputItem[], tools: ResponseTool[]): Promise<ResponsesResult> => {
@@ -57,6 +57,8 @@ export async function runResponsesLoop(o: ResponsesLoopOptions): Promise<Respons
     acc.reasoningTokens += u?.output_tokens_details?.reasoning_tokens ?? 0;
     acc.cachedTokens += u?.input_tokens_details?.cached_tokens ?? 0;
     acc.costTicks += u?.cost_in_usd_ticks ?? 0;
+    acc.inputTokens += u?.input_tokens ?? 0;
+    if (typeof u?.cost_in_usd_ticks !== 'number') { acc.costMissing++; }
     if (u?.input_tokens) { acc.lastInputTokens = u.input_tokens; }
     for (const c of res.citations) { if (!seen.has(c.url)) { seen.add(c.url); acc.citations.push(c); } }
     return res;

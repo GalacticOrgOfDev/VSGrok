@@ -427,4 +427,64 @@ suite('VSGrok in VS Code', () => {
       assert.doesNotMatch(out, /should-never-show/); assert.match(out, /visible one/); assert.match(out, /^<diagnostics source="untrusted tool output"/);
     } finally { dc.dispose(); }
   });
+
+  // ---------- 0.8.0: images + cost meter (mock xAI) ----------
+  test('images: sent as input_image data URLs, store=false for image chats, vision gate, Explorer drop rules, cost meter', async () => {
+    const xai = process.env.VSGROK_TEST_XAI!;
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('baseUrl', xai + '/v1', vscode.ConfigurationTarget.Global);
+    await c.update('model', 'mock-text', vscode.ConfigurationTarget.Global);
+    await api.chat['ctx'].secrets.store('vsgrok.apiKey', 'test-key');
+    try {
+      await api.chat.testReceive({ type: 'clearChat' });
+      await idle();
+      // Text-only model: vision note offers mock-vision, nothing is sent.
+      const v0 = posts('visionNote').length;
+      await api.chat.testReceive({ type: 'query', text: 'what is this?', images: [PNG] });
+      const note = await until(() => posts('visionNote')[v0]);
+      assert.strictEqual(note.model, 'mock-text'); assert.strictEqual(note.suggest, 'mock-vision');
+      const reqs0 = await (await fetch(xai + '/requests')).json() as unknown[];
+      assert.strictEqual(reqs0.length, 0);
+      // Bad images are refused before sending.
+      const r0 = posts('imagesRefused').length;
+      await c.update('model', 'mock-vision', vscode.ConfigurationTarget.Global);
+      await api.chat.testReceive({ type: 'query', text: 'what is this?', images: [PNG, 'data:image/svg+xml;base64,PHN2Zz4='] });
+      await idle();
+      assert.match(posts('imagesRefused')[r0].reasons[0], /PNG or JPEG/);
+      const reqs = await (await fetch(xai + '/requests')).json() as { store: boolean; input: { role: string; content: unknown }[] }[];
+      assert.strictEqual(reqs.length, 1);
+      const user = reqs[0].input.find(i => i.role === 'user')!;
+      assert.deepStrictEqual(user.content, [{ type: 'input_text', text: 'what is this?' }, { type: 'input_image', image_url: PNG }]);
+      assert.strictEqual(reqs[0].store, false, 'image chats are not stored server-side');
+      // Follow-up text turn in the same chat stays store=false and resends the history (incl. the image).
+      await api.chat.testReceive({ type: 'query', text: 'and the color?' });
+      await idle();
+      const reqs2 = await (await fetch(xai + '/requests')).json() as { store: boolean; previous_response_id?: string; input: unknown[] }[];
+      assert.strictEqual(reqs2[1].store, false); assert.strictEqual(reqs2[1].previous_response_id, undefined);
+      assert.match(JSON.stringify(reqs2[1].input), /input_image/);
+      // Cost meter: API-reported cost (2 × 123,000,000 ticks = $0.0246) and tokens.
+      const meter = posts('costMeter').at(-1);
+      assert.strictEqual(meter.hidden, false); assert.strictEqual(meter.text, '3.1k tok · $0.025');
+      assert.match(meter.tooltip, /Cost reported by xAI: \$0\.025/);
+      await api.chat.testReceive({ type: 'clearChat' });
+      assert.strictEqual(posts('costMeter').at(-1).hidden, true);
+      // Explorer drops: workspace image → handed to the webview; secret-looking or outside → refused.
+      const root = vscode.workspace.workspaceFolders![0].uri;
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'shot.png'), Buffer.from(PNG.split(',')[1], 'base64'));
+      const i0 = posts('imageFile').length; const f0 = posts('contextRefused').length;
+      await api.chat.testReceive({ type: 'dropFiles', uris: [vscode.Uri.joinPath(root, 'shot.png').toString(), 'file:///etc/hidden.png', vscode.Uri.joinPath(root, 'id_rsa.png').toString()] });
+      const img = await until(() => posts('imageFile')[i0]);
+      assert.strictEqual(img.name, 'shot.png'); assert.strictEqual(img.dataUrl, PNG);
+      assert.strictEqual(posts('imageFile').length, i0 + 1);
+      assert.strictEqual(posts('contextRefused').length - f0, 2);
+      const html: string = api.chat['view'].webview.html;
+      assert.match(html, /img-src [^;]* data:;/); assert.doesNotMatch(html, /blob:/);
+      assert.match(html, /id="attach-image"/); assert.match(html, /id="cost-meter"/);
+    } finally {
+      await api.chat['ctx'].secrets.delete('vsgrok.apiKey');
+      await c.update('baseUrl', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('model', undefined, vscode.ConfigurationTarget.Global);
+    }
+  });
 });

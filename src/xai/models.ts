@@ -1,5 +1,6 @@
 // Live model discovery via GET {baseUrl}/models (https://docs.x.ai/developers/rest-api-reference/inference/models.md).
-export interface ModelInfo { id: string; contextLength?: number; reasoning?: boolean }
+/** vision: true/false from GET /v1/language-models input_modalities; undefined when unknown. */
+export interface ModelInfo { id: string; contextLength?: number; reasoning?: boolean; vision?: boolean }
 
 /** Used when there is no key, the request fails, or it returns nothing usable. Ids from https://docs.x.ai/developers/models.md (Oct 2026). */
 export const FALLBACK_MODELS: ModelInfo[] = [
@@ -29,13 +30,37 @@ export function parseModels(json: unknown): ModelInfo[] {
   return out.map(m => ({ id: m.id, contextLength: m.contextLength, reasoning: m.reasoning }));
 }
 
+/** Parse GET /v1/language-models: id (+aliases) → supports image input. Exported for tests. */
+export function parseVision(json: unknown): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  const list = (json as { models?: unknown })?.models;
+  if (!Array.isArray(list)) { return out; }
+  for (const m of list) {
+    const r = m as { id?: unknown; aliases?: unknown; input_modalities?: unknown };
+    if (typeof r.id !== 'string' || !Array.isArray(r.input_modalities)) { continue; }
+    const v = r.input_modalities.includes('image');
+    out.set(r.id, v);
+    if (Array.isArray(r.aliases)) { for (const a of r.aliases) { if (typeof a === 'string') { out.set(a, v); } } }
+  }
+  return out;
+}
+export function withVision(models: ModelInfo[], vision: Map<string, boolean>): ModelInfo[] {
+  return models.map(m => vision.has(m.id) ? { ...m, vision: vision.get(m.id) } : m);
+}
+
 export async function fetchModels(baseUrl: string, apiKey: string, timeoutMs = 8000): Promise<ModelInfo[]> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const res = await fetch(baseUrl.replace(/\/+$/, '') + '/models', { headers: { Authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
     if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-    return parseModels(await res.json());
+    const models = parseModels(await res.json());
+    // Image support comes from /language-models (input_modalities). Best effort: unknown if it fails.
+    try {
+      const lm = await fetch(baseUrl.replace(/\/+$/, '') + '/language-models', { headers: { Authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
+      if (lm.ok) { return withVision(models, parseVision(await lm.json())); }
+    } catch { /* keep unknown */ }
+    return models;
   } finally { clearTimeout(t); }
 }
 

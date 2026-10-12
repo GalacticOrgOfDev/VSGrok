@@ -12,6 +12,8 @@ import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
 import { checkReadable } from './security';
 import { problemsContext } from './agent/checks';
+import { filterImages, visionBlocked, IMAGE_FILE_RE, API_MAX_IMAGE_BYTES } from './imagesCore';
+import { MeterState, emptyMeter, addTurn, meterView } from './costMeter';
 import { onPlanApplied, onPlanUndoExpired, undoPlan } from './planApply';
 import { isSecretPath } from './index/lexical';
 import { RulesWatcher, rulesPrompt } from './rules';
@@ -75,6 +77,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private problemsEnabled = true;
   private problemsTimer?: NodeJS.Timeout;
   private editedThisTurn = false;
+  private meter: MeterState = emptyMeter();
+  /** Once a chat contains images it stops using server-side storage (xAI advises store=false with images). */
+  private noStore = false;
   private planAppliedThisTurn = false;
   /** Hash of the project rules the current Responses chain was started/updated with. */
   private rulesHash?: string;
@@ -130,6 +135,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <button id="web-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
 <button id="x-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
+<span id="cost-meter" class="cost-meter" role="status" hidden tabindex="0"></span>
 <button id="rules-chip" type="button" class="rules-chip" hidden aria-label="Project rules"></button>
 <button id="settings-btn" type="button" class="h-btn icon" aria-label="Settings" aria-controls="settings-panel" aria-expanded="false">⚙</button>
 <button id="clear-btn" type="button" class="h-btn" aria-label="New chat">New</button></div></header>
@@ -145,7 +151,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button></div></div>
 <div id="messages-wrap"><div id="messages" role="log" aria-live="polite"></div><button id="new-output" class="pill" hidden>↓ New output</button><div id="sr-announce" class="sr-only" aria-live="polite"></div></div>
 <div id="chips"></div>
-<div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button>
+<div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button><button id="attach-image" class="h-btn icon" aria-label="Attach image" title="Attach image (or paste / drop one)">🖼</button>
 <textarea id="input" rows="1" placeholder="Ask Grok… (Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
 <button id="send" class="send" aria-label="Send">➤</button></div>
 <script nonce="${nonce}" src="${u('marked.min.js')}"></script>
@@ -216,7 +222,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.onViewReady?.();
         break;
       }
-      case 'query': if (typeof m.text === 'string') { await this.send(m.text, Array.isArray(m.images) ? m.images.filter((s: unknown) => typeof s === 'string' && /^data:image\/(png|jpe?g);base64,/.test(s as string)) : undefined); } break;
+      case 'query': if (typeof m.text === 'string') {
+        const { images, dropped } = filterImages(m.images);
+        if (dropped.length) { this.post({ type: 'imagesRefused', reasons: dropped }); }
+        if (images.length && await this.visionGate()) { break; }
+        await this.send(m.text, images.length ? images : undefined);
+      } break;
+      case 'pickImage': await this.pickImages(); break;
       case 'stop': this.stop(); break;
       case 'regenerate': if (this.lastUser && !this.busy) {
         if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev }; this.convMode = this.preTurn.mode; }
@@ -224,7 +236,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.history.pop();
         await this.send(this.lastUser.text, this.lastUser.images);
       } break;
-      case 'clearChat': this.stop(); this.history = []; this.resetConv(); this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
+      case 'clearChat': this.stop(); this.history = []; this.resetConv(); this.meter = emptyMeter(); this.noStore = false; this.pushMeter(); this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
       case 'updateSettings': await this.updateSettings(m); break;
       case 'setApiKey': await vscode.commands.executeCommand('vsgrok.setApiKey'); break;
       case 'getApiKey': await vscode.commands.executeCommand('vsgrok.signIn'); break;
@@ -236,7 +248,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'pickContext': await this.pickContext(); break;
-      case 'dropFiles': if (Array.isArray(m.uris)) { for (const s of m.uris.slice(0, 50)) { try { await this.addFileContext(vscode.Uri.parse(String(s), true)); } catch { /* ignore */ } } } break;
+      case 'dropFiles': if (Array.isArray(m.uris)) {
+        for (const s of m.uris.slice(0, 50)) {
+          try {
+            const u = vscode.Uri.parse(String(s), true);
+            if (IMAGE_FILE_RE.test(u.path)) { await this.sendImageFile(u, true); } else { await this.addFileContext(u); }
+          } catch { /* ignore */ }
+        }
+      } break;
       case 'openContext': {
         const c = this.findContext(String(m.id));
         if (c) { const ed = await vscode.window.showTextDocument(c.uri, { preview: true }); if (c.range) { ed.selection = new vscode.Selection(c.range.start, c.range.end); ed.revealRange(c.range); } }
@@ -281,6 +300,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
+
+  /** If the selected model is known not to accept images, show an in-chat note (with a switch offer) and return true. */
+  private async visionGate(): Promise<boolean> {
+    const model = cfg().get<string>('model') || DEFAULT_MODEL;
+    const { models } = await this.getModels();
+    const v = visionBlocked(model, models);
+    if (!v.blocked) { return false; }
+    this.post({ type: 'visionNote', model, suggest: v.suggest });
+    return true;
+  }
+
+  /** Read an image file and hand it to the webview to downscale. Drops follow the workspace/secret rules. */
+  private async sendImageFile(u: vscode.Uri, workspaceOnly: boolean) {
+    if (workspaceOnly) {
+      const chk = await checkReadable(u);
+      if (!chk.ok) { this.post({ type: 'contextRefused', path: chk.rel, reason: chk.reason }); return; }
+    } else if (u.scheme !== 'file' || isSecretPath(u.path)) {
+      this.post({ type: 'contextRefused', path: u.path.split('/').pop(), reason: 'looks like a secrets/credentials file' }); return;
+    }
+    try {
+      const st = await vscode.workspace.fs.stat(u);
+      if (st.size > API_MAX_IMAGE_BYTES * 2) { this.post({ type: 'imagesRefused', reasons: [`${u.path.split('/').pop()}: file too large`] }); return; }
+      const b = await vscode.workspace.fs.readFile(u);
+      const ext = (u.path.match(/\.(\w+)$/)?.[1] ?? 'png').toLowerCase();
+      const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+      this.post({ type: 'imageFile', name: u.path.split('/').pop(), dataUrl: `data:${mime};base64,${Buffer.from(b).toString('base64')}` });
+    } catch (e) { this.post({ type: 'imagesRefused', reasons: [`${u.path.split('/').pop()}: ${(e as Error).message}`] }); }
+  }
+
+  private async pickImages() {
+    const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Attach', filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] } });
+    for (const u of (picked ?? []).slice(0, 8)) { await this.sendImageFile(u, false); }
+  }
+
+  private pushMeter() { this.post({ type: 'costMeter', ...meterView(this.meter) }); }
 
   /** Fetch (or reuse cached) model list and send it to the dropdown. */
   async getModels(force = false): Promise<{ models: ModelInfo[]; source: string; error?: string }> {
@@ -417,7 +471,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.busy = true;
     const id = `m${++this.seq}`;
     const attached = [...this.contexts, ...(this.implicitSel ? [this.implicitSel] : [])];
-    this.post({ type: 'userMessage', id, text, chips: attached.map(c => this.chipOf(c)) });
+    this.post({ type: 'userMessage', id, text, chips: attached.map(c => this.chipOf(c)), images });
     this.contexts = []; this.pushContexts();
     this.lastUser = { text, images };
     let full = await this.resolveTags(text);
@@ -449,7 +503,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const agent = this.agentMode;
     const mode = agent ? 'agent' : 'ask';
     const c = cfg();
-    const store = c.get<boolean>('responses.store') ?? true;
+    if (images?.length) { this.noStore = true; }
+    const store = (c.get<boolean>('responses.store') ?? true) && !this.noStore;
     const maxSteps = clampNum(c.get('agent.maxSteps'), 1, 50, 15);
     const cts = this.cts!;
     const signal = this.abort!.signal;
@@ -535,6 +590,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.lastInputTokens = r.lastInputTokens;
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
       this.offerChecks();
+      this.meter = addTurn(this.meter, { input: r.inputTokens, output: r.outputTokens, reasoning: r.reasoningTokens, cached: r.cachedTokens,
+        costUsd: r.costMissing >= r.steps ? undefined : r.costTicks / 1e10, costMissing: r.costMissing });
+      this.pushMeter();
       this.post({ type: 'streamDone', id: aid, meta: {
         latencyMs: Date.now() - t0, completionTokens: r.outputTokens || undefined, cachedTokens: r.cachedTokens || undefined,
         reasoningTokens: r.reasoningTokens || undefined, inputTokens: r.lastInputTokens || undefined,
@@ -605,6 +663,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
       this.offerChecks();
+      this.meter = addTurn(this.meter, { input: 0, output: r.completionTokens, reasoning: reasoningTok, cached }); this.pushMeter();
       this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, cachedTokens: cached || undefined, reasoningTokens: reasoningTok || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;

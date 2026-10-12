@@ -157,3 +157,47 @@ test('L1: flagged plan rows show the warning and link it to the checkbox', () =>
   assert.match(w.textContent!, /tasks/);
   assert.equal(d.querySelector('.plan-file input')!.getAttribute('aria-describedby'), w.id);
 });
+
+test('images: attached image shows as removable thumbnail chip and is sent with the query; vision note switches model; cost meter', async () => {
+  const { w, d, post, sent } = boot();
+  // jsdom doesn't decode images: report a small natural size so the original PNG is kept (no canvas needed).
+  w.Image = class { naturalWidth = 1; naturalHeight = 1; onload: any; onerror: any; set src(_v: string) { setTimeout(() => this.onload(), 0); } };
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  post({ type: 'imageFile', name: 'shot.png', dataUrl: PNG });
+  post({ type: 'imageFile', name: 'two.png', dataUrl: PNG });
+  await new Promise(r => setTimeout(r, 30));
+  let chips = d.querySelectorAll('.image-chip');
+  assert.equal(chips.length, 2);
+  assert.equal(chips[0].querySelector('img')!.getAttribute('alt'), 'Image 1: shot.png');
+  (chips[1].querySelector('.chip-x') as HTMLButtonElement).click();
+  chips = d.querySelectorAll('.image-chip'); assert.equal(chips.length, 1);
+  (d.getElementById('input') as HTMLTextAreaElement).value = 'what is this';
+  (d.getElementById('send') as HTMLButtonElement).click();
+  const q = sent.find(m => m.type === 'query');
+  assert.equal(q.text, 'what is this'); assert.equal(q.images.length, 1); assert.equal(q.images[0], PNG);
+  post({ type: 'userMessage', id: 'u1', text: 'what is this', chips: [], images: [PNG] });
+  assert.equal(d.querySelectorAll('.image-chip').length, 0);
+  assert.equal(d.querySelectorAll('.user-images img').length, 1);
+
+  post({ type: 'models', models: [{ id: 'old' }, { id: 'grok-4.7' }], current: 'old' });
+  post({ type: 'visionNote', model: 'old', suggest: 'grok-4.7' });
+  const card = d.querySelector('.vision-note')!;
+  assert.match(card.querySelector('.approval-head')!.textContent!, /old can't read images/);
+  (card.querySelector('[data-action="switch"]') as HTMLButtonElement).click();
+  assert.ok(sent.some(m => m.type === 'updateSettings' && m.model === 'grok-4.7'));
+  assert.equal((d.getElementById('model') as HTMLSelectElement).value, 'grok-4.7');
+
+  (d.getElementById('attach-image') as HTMLButtonElement).click();
+  assert.ok(sent.some(m => m.type === 'pickImage'));
+
+  const cm = d.getElementById('cost-meter')!;
+  assert.equal(cm.hidden, true);
+  post({ type: 'costMeter', hidden: false, text: '12k tok · $0.012', tooltip: 'This chat: 2 turns' });
+  assert.equal(cm.hidden, false); assert.equal(cm.textContent, '12k tok · $0.012'); assert.equal(cm.title, 'This chat: 2 turns');
+});
+
+test('CSP allows data: images only (no blob:, no remote)', () => {
+  const src = fs.readFileSync(path.join(root, 'src', 'chat.ts'), 'utf8');
+  const csp = /Content-Security-Policy" content="([^"]+)"/.exec(src)![1];
+  assert.match(csp, /img-src \$\{webview\.cspSource\} data:;/); assert.doesNotMatch(csp, /blob:|https:/);
+});
