@@ -308,6 +308,29 @@
     const acts = card.querySelector('.approval-actions'); if (acts) { acts.remove(); }
     card.querySelector('.approval-status').textContent = st === 'approved' ? '✓ Approved' : st === 'denied' ? '✕ Denied' : '⊘ ' + (st === 'panel reloaded' ? 'Cancelled (panel reloaded)' : st === 'panel closed' ? 'Cancelled (panel closed)' : 'Cancelled');
   }
+
+  // In-chat update card (GitHub releases). One card, refreshed in place.
+  let updateCardEl = null;
+  function renderUpdateCard(c) {
+    if (!c) { return; }
+    const wasNear = nearBottom();
+    if (!updateCardEl || !updateCardEl.isConnected) { updateCardEl = document.createElement('div'); updateCardEl.className = 'approval-card update-card'; updateCardEl.dataset.kind = 'edit'; messagesEl.appendChild(updateCardEl); }
+    const card = updateCardEl; card.textContent = ''; card.removeAttribute('data-state');
+    const head = document.createElement('div'); head.className = 'approval-head'; card.appendChild(head);
+    const meta = document.createElement('div'); meta.className = 'approval-meta'; card.appendChild(meta);
+    const actions = document.createElement('div'); actions.className = 'approval-actions';
+    const mk = (label, cls, action) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', () => { if (action !== 'notes' && action !== 'dismiss') { actions.querySelectorAll('button').forEach(x => (x.disabled = true)); } if (action === 'dismiss') { card.remove(); return; } vscode.postMessage({ type: 'updateAction', action }); }); actions.appendChild(b); };
+    const cur = String(c.current || ''), lat = String(c.latest || '');
+    switch (c.state) {
+      case 'available': head.textContent = '✦ VSGrok ' + lat + ' is available'; meta.textContent = 'You have ' + cur + '. Installs the release .vsix from GitHub.'; mk('Update now', 'approve', 'update'); mk("What's new", 'diff', 'notes'); mk('Later', 'deny', 'dismiss'); break;
+      case 'downloading': head.textContent = '◌ Downloading VSGrok ' + lat + '…'; meta.textContent = 'Installing from GitHub Releases.'; break;
+      case 'installed': head.textContent = '✓ VSGrok ' + lat + ' installed'; meta.textContent = 'Reload the window to start using it.'; card.dataset.state = 'approved'; mk('Reload Window', 'approve', 'reload'); mk('Later', 'deny', 'dismiss'); break;
+      case 'uptodate': head.textContent = '✓ VSGrok is up to date'; meta.textContent = 'Installed ' + cur + (lat ? ' · latest release ' + lat : ' · no release found'); card.dataset.state = 'approved'; mk('Dismiss', 'deny', 'dismiss'); break;
+      default: head.textContent = '✕ Update problem'; meta.textContent = String(c.msg || 'Unknown error'); card.dataset.state = 'denied'; if (c.url) { mk('Open release page', 'diff', 'notes'); } mk('Dismiss', 'deny', 'dismiss');
+    }
+    if (actions.childNodes.length) { card.appendChild(actions); }
+    stick(wasNear);
+  }
   window.addEventListener('message', (ev) => {
     const m = ev.data || {};
     switch (m.type) {
@@ -361,6 +384,7 @@
       }
       case 'approvalRequest': addApprovalCard(String(m.reqId), m.request); break;
       case 'approvalResolved': resolveApprovalCard(String(m.reqId), String(m.state || 'cancelled')); break;
+      case 'updateCard': renderUpdateCard(m.card); break;
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
       case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }

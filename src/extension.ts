@@ -1,6 +1,7 @@
 // VSGrok entry point.
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat';
+import { Updater } from './update';
 import { GrokInlineProvider } from './inline';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
@@ -25,6 +26,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     context.secrets.onDidChange(e => { if (e.key === SECRET_KEY) { void chat.pushKeyState(); void chat.pushModels(true); } }),
   );
+
+  const updater = new Updater(context, chat);
+  reg('vsgrok.checkForUpdates', () => updater.check(true));
+  setTimeout(() => { void updater.autoCheck(); }, 5000);
 
   reg('vsgrok.setApiKey', async () => {
     const key = await vscode.window.showInputBox({ prompt: 'Enter your xAI API key (stored in VS Code SecretStorage)', password: true, ignoreFocusOut: true });

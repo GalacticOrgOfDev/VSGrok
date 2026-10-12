@@ -128,6 +128,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </body></html>`;
   }
 
+  onUpdateAction?: (action: string) => void;
+  /** Show (or refresh) the in-chat update card; opens the chat view if needed. */
+  async showUpdateCard(card: unknown): Promise<void> {
+    if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
+    await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
+    this.post({ type: 'updateCard', card });
+  }
+
   private post(msg: unknown) { void this.view?.webview.postMessage(msg); }
 
   private waitReady(): Promise<void> {
@@ -138,6 +146,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async onMessage(m: any) {
     if (this.approvals.handle(m)) { return; }
+    if (m?.type === 'updateAction' && typeof m.action === 'string') { this.onUpdateAction?.(m.action); return; }
     switch (m?.type) {
       case 'ready': {
         this.ready = true;

@@ -70,8 +70,8 @@ npx @vscode/vsce package --no-dependencies
 
 ## Install and updates
 
-Once VSGrok is published on the VS Code Marketplace, install it from the Extensions view to get automatic updates; a manually installed `.vsix` does not auto-update. Maintainers: see [docs/PUBLISHING.md](docs/PUBLISHING.md).
+Download `vsgrok-X.Y.Z.vsix` from [GitHub Releases](https://github.com/GalacticOrgOfDev/VSGrok/releases) and run **Extensions: Install from VSIX…**. After that VSGrok updates itself: once a day (setting `vsgrok.checkForUpdates`, default on) it checks the latest GitHub release and, if it is newer, shows an **Update now** card in the chat that downloads and installs the `.vsix`, then offers **Reload Window**. Run **VSGrok: Check for Updates** anytime. Marketplace publishing (for VS Code's built-in auto-update) is planned; see [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 ## Status
 
-v0.5.0. Unit-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.
+v0.5.1. Unit-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.

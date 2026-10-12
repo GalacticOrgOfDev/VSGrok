@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -87,6 +87,11 @@
       {
         "command": "vsgrok.setApiKey",
         "title": "Set API Key",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.checkForUpdates",
+        "title": "Check for Updates",
         "category": "VSGrok"
       },
       {
@@ -286,6 +291,11 @@
           "minimum": 16,
           "maximum": 1024,
           "description": "Maximum tokens for an inline completion."
+        },
+        "vsgrok.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Check [GitHub Releases](https://github.com/GalacticOrgOfDev/VSGrok/releases) for a newer VSGrok once a day and offer an in-chat **Update now** card (downloads the release `.vsix` and installs it). Run **VSGrok: Check for Updates** anytime."
         },
         "vsgrok.theme": {
           "type": "string",

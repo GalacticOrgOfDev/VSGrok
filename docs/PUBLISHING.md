@@ -1,8 +1,10 @@
 # Publishing VSGrok (and getting auto-updates)
 
+> **For later.** Right now VSGrok updates itself from **GitHub Releases** (since 0.5.1): `.github/workflows/release.yml` builds, tests and attaches the `.vsix` to a GitHub Release on every `v*` tag, and the extension checks the latest release once a day (`vsgrok.checkForUpdates`, or **VSGrok: Check for Updates**) and offers an in-chat **Update now** card. The Marketplace steps below are kept for when we publish there; `publish.yml` is manual-only (`workflow_dispatch`) until then.
+
 VS Code only auto-updates extensions installed from the **Visual Studio Marketplace** (or, in VSCodium / Cursor / other forks, from **Open VSX**). A `.vsix` installed by hand ("Install from VSIX…") never auto-updates. Once VSGrok is on the Marketplace, everyone who installed it from there (with auto-update on, the default) gets each new version automatically.
 
-The publish workflow (`.github/workflows/publish.yml`) is already in the repo. On every pushed tag `v*` it installs, type-checks, lints, runs the tests, packages the `.vsix`, attaches it to a GitHub release, and publishes to the Marketplace (if the `VSCE_PAT` secret exists) and Open VSX (if `OVSX_PAT` exists). A missing secret skips that step with a warning instead of failing.
+The publish workflow (`.github/workflows/publish.yml`) is already in the repo. When run manually (Actions → Publish → Run workflow) it installs, type-checks, lints, runs the tests, packages the `.vsix` and publishes to the Marketplace (if the `VSCE_PAT` secret exists) and Open VSX (if `OVSX_PAT` exists). A missing secret skips that step with a warning instead of failing.
 
 `package.json` uses **publisher `GalacticOrgOfDev`** and extension name `vsgrok`, so the Marketplace id will be `GalacticOrgOfDev.vsgrok`. The publisher you create below must have exactly that ID (or change `"publisher"` in `package.json` to match the one you create).
 
@@ -38,11 +40,9 @@ The publish workflow (`.github/workflows/publish.yml`) is already in the repo. O
 
 ## Releasing a version
 1. Bump `version` in `package.json` and add a `CHANGELOG.md` entry; commit to `main`.
-2. Tag and push: `git tag v0.5.0 && git push origin v0.5.0`.
-3. Watch **Actions → Publish**. The tag must equal `v` + package.json version or the run fails.
+2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (release.yml creates the GitHub Release).
+3. Run **Actions → Publish (Marketplace, for later) → Run workflow**.
 4. The Marketplace usually lists the new version within minutes; installed copies update on VS Code's next update check (or **Extensions → … → Check for Extension Updates**).
-
-You can also run the workflow manually (**Actions → Publish → Run workflow**) without a tag; it then publishes whatever version is in `package.json`.
 
 ## Switching existing users from the sideloaded vsix
 Anyone who installed a `.vsix` should uninstall it once and install **VSGrok** from the Extensions view (search "VSGrok", publisher GalacticOrgOfDev). The extension id is the same, so settings and the stored API key carry over.
