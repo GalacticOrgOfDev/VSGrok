@@ -1,8 +1,15 @@
-// Agent tools. Read-only tools run directly; edits go through diff+Accept; commands need explicit confirmation.
+// Agent tools. Read-only tools run directly; edits and commands need Approve on an in-chat card.
 import * as vscode from 'vscode';
 import { ToolSpec } from '../xai/client';
 import { FunctionTool } from '../xai/responses';
 import { proposeEdit } from '../proposals';
+import { requestApproval } from './approvals';
+
+function toSignal(token: vscode.CancellationToken): AbortSignal {
+  const ac = new AbortController();
+  if (token.isCancellationRequested) { ac.abort(); } else { token.onCancellationRequested(() => ac.abort()); }
+  return ac.signal;
+}
 
 /** ~1M chars ≈ 250k tokens: half of grok-4.7's 500k context (docs.x.ai/developers/models). */
 const MAX_READ = 1_000_000;
@@ -52,8 +59,8 @@ async function readText(uri: vscode.Uri): Promise<string> {
 }
 
 async function runCommand(command: string, token: vscode.CancellationToken): Promise<string> {
-  const pick = await vscode.window.showWarningMessage(`Grok wants to run:\n${command}`, { modal: true }, 'Run');
-  if (pick !== 'Run') { return 'User declined to run the command.'; }
+  const ok = await requestApproval({ kind: 'command', command }, { signal: toSignal(token) });
+  if (!ok) { return 'User declined to run the command.'; }
   const cp = await import('child_process');
   return new Promise((resolve) => {
     const child = cp.spawn(command, { cwd: root().fsPath, shell: true });
@@ -147,7 +154,7 @@ export async function executeTool(name: string, args: any, token: vscode.Cancell
         return hits.join('\n') || '(no matches)';
       }
       case 'propose_edit': {
-        const r = await proposeEdit(resolveInWorkspace(String(args.path)), String(args.content), args.reason || 'Grok agent edit');
+        const r = await proposeEdit(resolveInWorkspace(String(args.path)), String(args.content), args.reason || 'Grok agent edit', toSignal(token));
         return r.msg;
       }
       case 'run_command': return await runCommand(String(args.command), token);

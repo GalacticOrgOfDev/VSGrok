@@ -7,6 +7,7 @@ import { runResponsesLoop, ConversationState } from './agent/responsesLoop';
 import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool, toResponsesTools } from './agent/tools';
 import { runToolLoop } from './agent/loop';
 import { proposeEdit, proposeRangeEdit } from './proposals';
+import { ApprovalBroker, setApprover } from './agent/approvals';
 import { setBusy } from './status';
 import { listModels, ModelInfo } from './xai/models';
 
@@ -24,7 +25,7 @@ export const SYSTEM_PROMPT =
   'Never claim to have changed files unless a tool result says the edit was applied.';
 
 const AGENT_PROMPT =
-  ' Agent mode is on: you can also call propose_edit (the user reviews a diff and must Accept) and run_command (the user must confirm). ' +
+  ' Agent mode is on: you can also call propose_edit and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
   'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.';
 
 const NO_AGENT_PROMPT =
@@ -60,13 +61,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private agentMode = false;
   /** Per-chat id sent as x-grok-conv-id so follow-up turns hit xAI's prompt cache. */
   private convId = newConvId();
+  /** In-chat Approve/Deny cards for commands and edits. */
+  private approvals = new ApprovalBroker((m) => this.post(m));
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? true;
     ctx.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.pushEditorState()),
       vscode.window.onDidChangeTextEditorSelection(() => this.pushEditorState()),
+      { dispose: () => { this.approvals.cancelAll('cancelled'); setApprover(undefined); } },
     );
+    setApprover(async (req, opts) => {
+      if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
+      else if (!this.view.visible) { this.view.show(true); }
+      await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
+      if (!this.ready) { return false; }
+      return this.approvals.request(req, opts);
+    });
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -76,7 +87,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true, localResourceRoots: [webRoot] };
     view.webview.html = this.html(view.webview, webRoot);
     view.webview.onDidReceiveMessage((m) => this.onMessage(m).catch(e => this.post({ type: 'toast', msg: String(e?.message ?? e) })));
-    view.onDidDispose(() => { this.view = undefined; this.ready = false; });
+    view.onDidDispose(() => { this.view = undefined; this.ready = false; this.approvals.cancelAll('panel closed'); });
   }
 
   private html(webview: vscode.Webview, root: vscode.Uri): string {
@@ -93,7 +104,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <select id="model" class="h-select" aria-label="Grok model" title="Grok model"></select>
 <button id="web-toggle" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
 <button id="x-toggle" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
-<label class="agent-toggle" title="Agent: let Grok propose edits (you Accept each diff) and request terminal commands (you confirm). Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
+<label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
 <button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
 <button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
 <section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
@@ -126,9 +137,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async onMessage(m: any) {
+    if (this.approvals.handle(m)) { return; }
     switch (m?.type) {
       case 'ready': {
         this.ready = true;
+        this.approvals.cancelAll('panel reloaded');
         this.pushSettings(); this.pushEditorState(); this.pushContexts(); void this.pushKeyState(); void this.pushModels();
         this.readyWaiters.splice(0).forEach(r => r());
         break;
@@ -292,7 +305,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this.send(text);
   }
 
-  stop() { this.abort?.abort(); this.cts?.cancel(); }
+  stop() { this.abort?.abort(); this.cts?.cancel(); this.approvals.cancelAll('cancelled'); }
 
   private async send(text: string, images?: string[]) {
     if (this.busy) { this.post({ type: 'toast', msg: 'Grok is still answering — press Stop first.' }); return; }

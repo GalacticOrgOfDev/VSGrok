@@ -165,3 +165,27 @@ body.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light){
 .citations ol{margin:0;padding-left:18px}
 .citations a{color:var(--vscode-textLink-foreground);text-decoration:none;word-break:break-all}
 .citations a:hover{text-decoration:underline}
+/* In-chat approval cards */
+.approval-card{margin:6px 0;padding:8px 10px;border-radius:8px;border:1px solid var(--vscode-focusBorder);background:var(--vscode-editorWidget-background);font-size:12px}
+.approval-head{font-weight:600;margin-bottom:4px}
+.approval-cmd{margin:4px 0;padding:6px;white-space:pre-wrap;word-break:break-word;font-family:var(--vscode-editor-font-family);background:var(--vscode-textCodeBlock-background);border-radius:4px;max-height:160px;overflow:auto}
+.approval-path{font-family:var(--vscode-editor-font-family);word-break:break-all}
+.approval-meta{color:var(--vscode-descriptionForeground);margin-top:2px}
+.approval-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.approval-btn{padding:3px 12px;border-radius:4px;border:1px solid var(--vscode-button-border,transparent);cursor:pointer;font-size:12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.approval-btn.approve{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.approval-btn:disabled{opacity:.5;cursor:default}
+.approval-status:empty{display:none}
+.approval-status{margin-top:4px;color:var(--vscode-descriptionForeground)}
+.approval-card[data-state=approved]{border-color:var(--vscode-testing-iconPassed,#3fb950)}
+.approval-card[data-state=denied],.approval-card[data-state=cancelled],.approval-card[data-state="panel closed"],.approval-card[data-state="panel reloaded"]{opacity:.75;border-color:var(--vscode-widget-border,transparent)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card{background:linear-gradient(135deg,rgba(79,209,255,.08),rgba(139,123,255,.10)),var(--g-panel);border:1px solid rgba(79,209,255,.45);box-shadow:var(--g-glow);border-radius:12px;backdrop-filter:blur(4px);color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-kind=command] .approval-head{color:#ffd27a}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-head{background:linear-gradient(90deg,#fff,var(--g-cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-cmd{background:#070912;border:1px solid var(--g-border)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-meta,.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-status{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-btn{background:rgba(255,255,255,.04);color:var(--g-text);border:1px solid var(--g-border);border-radius:999px;transition:border-color .15s,box-shadow .15s}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-btn.approve{background:linear-gradient(135deg,var(--g-cyan),var(--g-violet));color:#05060d;border-color:transparent;font-weight:600}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-btn:hover:not(:disabled){border-color:var(--g-cyan);box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state]{box-shadow:none}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state=approved]{border-color:rgba(63,185,80,.6)}

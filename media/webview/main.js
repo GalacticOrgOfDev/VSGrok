@@ -266,6 +266,48 @@
     if (uris.length) { vscode.postMessage({ type: 'dropFiles', uris }); }
   });
 
+
+  // In-chat approval cards (commands, edits). Text only via textContent; decision goes back with reqId.
+  const approvalCards = new Map();
+  function addApprovalCard(reqId, r) {
+    if (!r || approvalCards.has(reqId)) { return; }
+    const wasNear = nearBottom();
+    const card = document.createElement('div'); card.className = 'approval-card'; card.dataset.kind = r.kind === 'command' ? 'command' : 'edit';
+    card.setAttribute('role', 'group');
+    const head = document.createElement('div'); head.className = 'approval-head';
+    head.textContent = r.kind === 'command' ? '⚡ Grok wants to run a command' : (r.isNew ? '✦ Grok wants to create a file' : '✦ Grok wants to edit a file');
+    card.setAttribute('aria-label', head.textContent);
+    card.appendChild(head);
+    if (r.kind === 'command') {
+      const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.command || ''); card.appendChild(pre);
+    } else {
+      const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.path || ''); card.appendChild(p);
+      const meta = document.createElement('div'); meta.className = 'approval-meta';
+      const delta = (typeof r.added === 'number' ? '+' + r.added : '') + (typeof r.removed === 'number' ? ' −' + r.removed : '');
+      meta.textContent = [r.reason ? String(r.reason) : '', delta.trim()].filter(Boolean).join(' · '); card.appendChild(meta);
+    }
+    const actions = document.createElement('div'); actions.className = 'approval-actions';
+    const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', fn); actions.appendChild(b); return b; };
+    const decide = (decision) => { card.classList.add('pending'); actions.querySelectorAll('button').forEach(b => (b.disabled = true)); vscode.postMessage({ type: 'approvalResponse', reqId, decision }); };
+    const ok = mk(r.kind === 'command' ? 'Run' : 'Approve', 'approve', () => decide('approve'));
+    mk('Deny', 'deny', () => decide('deny'));
+    if (r.kind === 'edit') { mk('View diff', 'diff', () => vscode.postMessage({ type: 'approvalViewDiff', reqId })); }
+    card.appendChild(actions);
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    const t = state.streaming ? turns.get(state.streaming) : null;
+    (t && t.tools ? t.tools : messagesEl).appendChild(card);
+    approvalCards.set(reqId, card);
+    stick(wasNear);
+    ok.focus({ preventScroll: true });
+    announce.textContent = 'Approval needed: ' + head.textContent;
+  }
+  function resolveApprovalCard(reqId, st) {
+    const card = approvalCards.get(reqId); if (!card) { return; }
+    approvalCards.delete(reqId);
+    card.classList.remove('pending'); card.dataset.state = st;
+    const acts = card.querySelector('.approval-actions'); if (acts) { acts.remove(); }
+    card.querySelector('.approval-status').textContent = st === 'approved' ? '✓ Approved' : st === 'denied' ? '✕ Denied' : '⊘ ' + (st === 'panel reloaded' ? 'Cancelled (panel reloaded)' : st === 'panel closed' ? 'Cancelled (panel closed)' : 'Cancelled');
+  }
   window.addEventListener('message', (ev) => {
     const m = ev.data || {};
     switch (m.type) {
@@ -317,8 +359,10 @@
           setTimeout(() => toast.remove(), 5000);
         } break;
       }
+      case 'approvalRequest': addApprovalCard(String(m.reqId), m.request); break;
+      case 'approvalResolved': resolveApprovalCard(String(m.reqId), String(m.state || 'cancelled')); break;
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
-      case 'chatCleared': messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
+      case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }
   });
 

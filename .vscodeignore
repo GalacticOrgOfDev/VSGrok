@@ -11,3 +11,5 @@ eslint.config.mjs
 esbuild.mjs
 pnpm-lock.yaml
 UX/**
+.github/**
+docs/**

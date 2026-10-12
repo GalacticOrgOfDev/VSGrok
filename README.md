@@ -5,12 +5,14 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 ## Features
 
 - **Streaming chat sidebar** — markdown rendered as it streams, Stop button (or `Esc`), regenerate, copy, per-reply model / token / latency footer.
-- **Code-block actions** — every code block has **Copy**, **Insert** (at cursor / replace selection) and **Apply as diff** (opens a diff of the target file vs. Grok's proposal; nothing is written until you click **Accept**). A fence like ` ```ts path=src/a.ts ` targets that file.
+- **Code-block actions** — every code block has **Copy**, **Insert** (at cursor / replace selection) and **Apply as diff** (opens a diff of the target file vs. Grok's proposal; nothing is written until you click **Approve** on the card in chat). A fence like ` ```ts path=src/a.ts ` targets that file.
 - **Context chips** — attach the current file, the current selection (shown automatically, click to pin), workspace files via quick pick, or files dragged from the Explorer. `@file` and `@workspace` in a message also still work. Attached files are sent in full up to `vsgrok.context.maxFileChars` (default 1,000,000 characters; grok-4.7 has a 500k-token context window).
 - **Workspace tools in every chat** — Grok can always call `get_workspace_overview` (folder, top-level tree, package.json/README summary, open editors, git branch/status), `read_file`, `list_files` and `search_workspace` (read-only, run directly, restricted to the workspace). It keeps calling tools until it has an answer (cap: `vsgrok.agent.maxSteps`), and each call shows in the chat as a collapsible line (e.g. *✓ Read src/a.ts*) with its output.
 - **Agent** (header toggle, on by default, or *VSGrok: Start Agent Task*) adds the write tools:
-  - `propose_edit` — always shown as a diff and applied only if you accept,
-  - `run_command` — runs in the workspace root only after you confirm a modal prompt.
+  - `propose_edit` — applied only after you click **Approve**,
+  - `run_command` — runs in the workspace root only after you click **Run**.
+- **Approvals in the chat** — every permission request (commands, agent edits, *Apply as diff*, *Fix with Grok*) appears as an inline card in the chat with **Approve/Run** and **Deny** (edits also have **View diff**, which opens VS Code's diff editor; the decision is still made in the chat). No pop-ups or notifications. Stopping, starting a new chat or closing the panel counts as Deny.
+- **Real-world example** — [PoliSim workspace analysis](docs/examples/polisim-workspace-analysis.md), generated live by VSGrok using all six workspace tools.
 - **Built on xAI's Responses API** (`POST /v1/responses`, [docs](https://docs.x.ai/developers/rest-api-reference/inference/responses)) — chat, agent mode and commands stream Responses events; client-side tools use `function_call` / `function_call_output` items ([function calling](https://docs.x.ai/developers/tools/function-calling)).
 - **Server-side conversation history** — follow-up turns send only the new input plus `previous_response_id` ([chaining](https://docs.x.ai/developers/model-capabilities/text/generate-text#chaining-the-conversation)). VSGrok also keeps every returned item (including reasoning `encrypted_content`) verbatim, so if a stored response has expired or you set `vsgrok.responses.store` to `false`, it resends the full history unchanged ([encrypted reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning#encrypted-reasoning-content)). Long chats are compacted with `POST /v1/responses/compact` once input reaches `vsgrok.responses.compactAtTokens` ([context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction)). There is no fixed message limit.
 - **Web Search and X Search** — header toggles (**Web**, **𝕏**) or `vsgrok.tools.webSearch` / `vsgrok.tools.xSearch` enable xAI's built-in server-side tools ([web search](https://docs.x.ai/developers/tools/web-search), [X search](https://docs.x.ai/developers/tools/x-search)). Searches show as activity lines, and the sources come back as `url_citation` annotations ([citations](https://docs.x.ai/developers/tools/citations)) and are listed as links under the answer. xAI bills these tools separately.
@@ -19,7 +21,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Prompt caching and cost** — each chat sends an `x-grok-conv-id` header so turns reuse xAI's prompt cache ([docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits)). Under each reply: output, reasoning and cached tokens, context size and cost (from `usage.cost_in_usd_ticks`).
 - **Chat Completions fallback** — `vsgrok.api: "chat"` switches back to the legacy `/v1/chat/completions` path (no server-side tools, citations or compaction; history is kept locally).
 - **Inline ghost-text completions** — debounced (default 275 ms), cancelled when you keep typing, toggle with *VSGrok: Toggle Inline Completions* or `vsgrok.inlineCompletions.enabled`.
-- **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar; uses [structured outputs](https://docs.x.ai/developers/model-capabilities/text/structured-outputs) with a `{subject, body[]}` JSON schema); **Fix with Grok** Quick Fix on diagnostics (lightbulb), applied through the same diff + Accept flow.
+- **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar; uses [structured outputs](https://docs.x.ai/developers/model-capabilities/text/structured-outputs) with a `{subject, body[]}` JSON schema); **Fix with Grok** Quick Fix on diagnostics (lightbulb), approved through the same in-chat card.
 
 ## Setup
 
@@ -66,6 +68,10 @@ node esbuild.mjs     # or --watch / --production
 npx @vscode/vsce package --no-dependencies
 ```
 
+## Install and updates
+
+Once VSGrok is published on the VS Code Marketplace, install it from the Extensions view to get automatic updates; a manually installed `.vsix` does not auto-update. Maintainers: see [docs/PUBLISHING.md](docs/PUBLISHING.md).
+
 ## Status
 
-v0.4.0. Built and unit-tested against a local fake server, not yet against the live xAI API; please report issues.
+v0.5.0. Unit-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.

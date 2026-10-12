@@ -1,5 +1,6 @@
-// Proposed edits: shown via a vsgrok-proposed: virtual document in vscode.diff; applied only after the user accepts.
+// Proposed edits: approved or denied on an in-chat card (View diff opens vscode.diff on a vsgrok-proposed: doc); applied only after Approve.
 import * as vscode from 'vscode';
+import { requestApproval, lineDelta } from './agent/approvals';
 
 export const SCHEME = 'vsgrok-proposed';
 
@@ -21,7 +22,7 @@ export function registerProposals(ctx: vscode.ExtensionContext) {
  * Show current file vs proposed content and ask the user. Returns true only if the user accepted
  * and the WorkspaceEdit applied. Nothing is written otherwise.
  */
-export async function proposeEdit(target: vscode.Uri, newContent: string, reason = 'Grok proposed edit'): Promise<{ ok: boolean; msg: string }> {
+export async function proposeEdit(target: vscode.Uri, newContent: string, reason = 'Grok proposed edit', signal?: AbortSignal): Promise<{ ok: boolean; msg: string }> {
   let exists = true;
   try { await vscode.workspace.fs.stat(target); } catch { exists = false; }
   const id = ++counter;
@@ -30,8 +31,13 @@ export async function proposeEdit(target: vscode.Uri, newContent: string, reason
   const left = exists ? target : vscode.Uri.from({ scheme: SCHEME, path: target.path, query: `empty=${id}` });
   if (!exists) { provider.contents.set(left.toString(), ''); }
   const rel = vscode.workspace.asRelativePath(target);
-  await vscode.commands.executeCommand('vscode.diff', left, proposed, `${rel} ↔ Grok proposal${exists ? '' : ' (new file)'}`, { preview: true });
-  const choice = await vscode.window.showInformationMessage(`${reason}: ${rel}`, { modal: false }, 'Accept', 'Reject');
+  const title = `${rel} ↔ Grok proposal${exists ? '' : ' (new file)'}`;
+  const showDiff = async () => { await vscode.commands.executeCommand('vscode.diff', left, proposed, title, { preview: true, preserveFocus: true }); };
+  let oldText = '';
+  if (exists) { try { oldText = (await vscode.workspace.openTextDocument(target)).getText(); } catch { /* binary/unreadable */ } }
+  const { added, removed } = lineDelta(oldText, newContent);
+  const accepted = await requestApproval({ kind: 'edit', path: rel, reason, isNew: !exists, added, removed }, { signal, onViewDiff: showDiff });
+  const choice = accepted ? 'Accept' : 'Reject';
   provider.contents.delete(proposed.toString());
   provider.contents.delete(left.toString());
   if (choice !== 'Accept') { return { ok: false, msg: `Rejected edit to ${rel}` }; }
@@ -48,8 +54,8 @@ export async function proposeEdit(target: vscode.Uri, newContent: string, reason
 }
 
 /** Replace only a range (e.g. a selection) with new text, via the same diff + accept flow. */
-export async function proposeRangeEdit(doc: vscode.TextDocument, range: vscode.Range, replacement: string, reason?: string) {
+export async function proposeRangeEdit(doc: vscode.TextDocument, range: vscode.Range, replacement: string, reason?: string, signal?: AbortSignal) {
   const full = doc.getText();
   const next = full.slice(0, doc.offsetAt(range.start)) + replacement + full.slice(doc.offsetAt(range.end));
-  return proposeEdit(doc.uri, next, reason);
+  return proposeEdit(doc.uri, next, reason, signal);
 }
