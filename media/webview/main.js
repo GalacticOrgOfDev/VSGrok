@@ -657,7 +657,7 @@
     } else if (r.kind === 'mcp') {
       const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.server || '') + ' › ' + String(r.tool || ''); card.appendChild(p);
       const src = document.createElement('div'); src.className = 'approval-meta approval-source' + (r.source === 'workspace' ? ' repo' : '');
-      src.textContent = r.source === 'workspace' ? 'Server from .vscode/vsgrok-mcp.json (this repo)' : 'Server from your settings'; card.appendChild(src);
+      src.textContent = r.source === 'workspace' ? 'Server defined by this repo (you allowed it)' : 'Server from your user settings'; card.appendChild(src);
       const lab = document.createElement('div'); lab.className = 'approval-meta'; lab.textContent = 'Arguments:'; card.appendChild(lab);
       const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.args || '{}'); card.appendChild(pre);
     } else {
@@ -665,6 +665,7 @@
       const meta = document.createElement('div'); meta.className = 'approval-meta';
       const delta = (typeof r.added === 'number' ? '+' + r.added : '') + (typeof r.removed === 'number' ? ' −' + r.removed : '');
       meta.textContent = [r.reason ? String(r.reason) : '', delta.trim()].filter(Boolean).join(' · '); card.appendChild(meta);
+      if (r.warn) { const w = document.createElement('div'); w.className = 'approval-meta approval-source repo approval-warn'; w.textContent = '⚠ ' + String(r.warn) + ' · check it before approving'; card.appendChild(w); }
     }
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', fn); actions.appendChild(b); return b; };

@@ -6,7 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 export type ApprovalRequest =
   | { kind: 'command'; title?: string; command: string; runs?: string[]; source?: string; repoControlled?: boolean }
-  | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number }
+  | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number; warn?: string }
   | { kind: 'mcp'; title?: string; server: string; tool: string; args: string; source?: 'settings' | 'workspace' }
   | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string; warn?: string }[] };
 

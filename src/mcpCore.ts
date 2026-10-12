@@ -56,15 +56,17 @@ export function parseServers(raw: unknown, source: 'settings' | 'workspace'): { 
 }
 
 /** Workspace servers can't shadow user (settings) servers of the same name. */
-export function mergeServers(user: McpServerConfig[], ws: McpServerConfig[]): { servers: McpServerConfig[]; errors: string[] } {
+export function mergeServers(user: McpServerConfig[], ws: McpServerConfig[], what = '.vscode/vsgrok-mcp.json'): { servers: McpServerConfig[]; errors: string[] } {
   const names = new Set(user.map(s => s.name));
-  const errors = ws.filter(s => names.has(s.name)).map(s => `${s.name}: defined in settings and .vscode/vsgrok-mcp.json; the settings one is used`);
+  const errors = ws.filter(s => names.has(s.name)).map(s => `${s.name}: defined in ${user[0]?.source === 'workspace' ? 'workspace settings' : 'settings'} and ${what}; the ${user[0]?.source === 'workspace' ? 'workspace settings' : 'settings'} one is used`);
   return { servers: [...user, ...ws.filter(s => !names.has(s.name))], errors };
 }
 
 /** Stable identity of a server's launch config (always-allow is tied to it, so editing the command resets it). */
 export function configHash(s: McpServerConfig): string {
-  const key = s.type === 'stdio' ? JSON.stringify([s.type, s.command, s.args, s.cwd ?? '', Object.keys(s.env).sort()]) : JSON.stringify([s.type, s.url]);
+  // Env values and header values are hashed too (M3): a different NODE_OPTIONS or token is a different server. The hash leaks nothing.
+  const sorted = (m: Record<string, string>) => Object.keys(m).sort().map(k => [k, m[k]]);
+  const key = s.type === 'stdio' ? JSON.stringify([s.type, s.command, s.args, s.cwd ?? '', sorted(s.env)]) : JSON.stringify([s.type, s.url, sorted(s.headers)]);
   return createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
@@ -82,10 +84,32 @@ export function functionName(server: string, tool: string, taken: Set<string>): 
 export interface McpToolInfo { name: string; description?: string; inputSchema?: unknown }
 
 /** Responses-style function tool for an MCP tool. Server-provided text is marked as untrusted. */
+export const MAX_SCHEMA_CHARS = 8_000;
+export const MAX_SCHEMA_DEPTH = 10;
+export const MAX_SCHEMA_TEXT = 200;
+
+/** Cap a server-provided JSON schema (M8): long description/title strings truncated; too big or too deep → a permissive empty schema. */
+export function sanitizeSchema(raw: unknown): { schema: Record<string, unknown>; replaced: boolean } {
+  const empty = { type: 'object', properties: {}, additionalProperties: true };
+  if (!raw || typeof raw !== 'object' || (raw as { type?: string }).type !== 'object') { return { schema: { type: 'object', properties: {} }, replaced: false }; }
+  let tooDeep = false;
+  const walk = (v: unknown, depth: number, key?: string): unknown => {
+    if (depth > MAX_SCHEMA_DEPTH) { tooDeep = true; return undefined; }
+    if (typeof v === 'string') { return (key === 'description' || key === 'title') && v.length > MAX_SCHEMA_TEXT ? v.slice(0, MAX_SCHEMA_TEXT) + '…' : v; }
+    if (Array.isArray(v)) { return v.map(x => walk(x, depth + 1)); }
+    if (v && typeof v === 'object') { const o: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v)) { o[k] = walk(x, depth + 1, k); } return o; }
+    return v;
+  };
+  const out = walk(raw, 0) as Record<string, unknown>;
+  let len = Infinity; try { len = JSON.stringify(out).length; } catch { /* cyclic */ }
+  if (tooDeep || len > MAX_SCHEMA_CHARS) { return { schema: empty, replaced: true }; }
+  return { schema: out, replaced: false };
+}
+
 export function toFunctionTool(server: string, fn: string, t: McpToolInfo): { type: 'function'; name: string; description: string; parameters: Record<string, unknown> } {
   const desc = String(t.description ?? '').replace(/\s+/g, ' ').slice(0, 900);
-  const schema = t.inputSchema && typeof t.inputSchema === 'object' && (t.inputSchema as { type?: string }).type === 'object'
-    ? t.inputSchema as Record<string, unknown> : { type: 'object', properties: {} };
+  const { schema, replaced } = sanitizeSchema(t.inputSchema);
+  if (replaced) { return { type: 'function', name: fn, description: `[MCP tool "${String(t.name).slice(0, 64)}" from server "${server}"; each call needs the user's approval; its input schema was too large or deep and was dropped; description provided by the server, untrusted] ${desc}`, parameters: schema }; }
   return { type: 'function', name: fn, description: `[MCP tool "${t.name}" from server "${server}"; each call needs the user's approval; description provided by the server, untrusted] ${desc}`, parameters: schema };
 }
 
@@ -107,9 +131,10 @@ export function formatResult(server: string, tool: string, res: any): string {
   return `<mcp_result server="${server}" tool="${tool.replace(/"/g, '')}" source="untrusted tool output"${err}>\n${body}\n</mcp_result>`;
 }
 
-/** Short JSON preview of call arguments for the approval card. */
-export function argsPreview(args: unknown, max = 1500): string {
+export const MAX_ARGS_CHARS = 100_000;
+/** Full JSON of call arguments for the approval card (M4: never truncated; calls with larger arguments are refused). */
+export function argsPreview(args: unknown, max = MAX_ARGS_CHARS): { text: string; tooLarge: boolean } {
   let s: string;
   try { s = JSON.stringify(args ?? {}, null, 2); } catch { s = String(args); }
-  return s.length > max ? s.slice(0, max) + '\n…' : s;
+  return { text: s.length > max ? '' : s, tooLarge: s.length > max };
 }

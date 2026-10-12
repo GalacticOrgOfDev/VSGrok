@@ -13,11 +13,23 @@ const WIN_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i
 
 /** Paths that change how the agent, editor or automation behaves: allowed, but flagged on the card. */
 export function sensitivePath(p: string): string | undefined {
-  const l = p.toLowerCase();
-  if (/^\.vscode\/(tasks|launch|settings|extensions)\.json$/.test(l)) { return 'changes VS Code tasks/launch/settings'; }
+  const l = p.toLowerCase().replace(/\\/g, '/');
+  const base = l.split('/').pop() ?? l;
+  if (/(^|\/)\.vscode\/(vsgrok-mcp|mcp)\.json$/.test(l) || /(^|\/)\.cursor\/mcp\.json$/.test(l)) { return 'configures MCP servers (programs VSGrok starts)'; }
+  if (/(^|\/)\.vscode\/(tasks|launch|settings|extensions)\.json$/.test(l) || l.endsWith('.code-workspace')) { return 'changes VS Code tasks/launch/settings'; }
   if (l === 'vsgrok.md' || l.startsWith('.vsgrok/')) { return 'changes Grok\'s project rules'; }
-  if (l.startsWith('.github/workflows/') || l === 'package.json' || /(^|\/)\.husky\//.test(l) || l === 'makefile') { return 'changes scripts or CI that run commands'; }
+  if (/(^|\/)\.github\/workflows\//.test(l) || /(^|\/)\.(husky|githooks)\//.test(l) || /(^|\/)\.gitlab-ci\.yml$/.test(l)) { return 'changes scripts or CI that run commands'; }
+  if (BUILD_FILES.test(base)) { return 'changes build/test config that runs code'; }
   return undefined;
+}
+
+/** Files that build tools or test runners execute or read for commands (any depth). */
+const BUILD_FILES = /^(package\.json|makefile|gnumakefile|justfile|taskfile\.ya?ml|conftest\.py|pyproject\.toml|setup\.py|setup\.cfg|tox\.ini|noxfile\.py|pytest\.ini|build\.rs|cargo\.toml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|pom\.xml|\.envrc|\.pre-commit-config\.ya?ml|\.npmrc|\.yarnrc(\.yml)?|(jest|vitest|vite|webpack|rollup|babel|eslint|playwright|karma)\.config\.[cm]?[jt]s|\.mocharc(\.[a-z]+)?|\.babelrc(\.js)?|\.eslintrc(\.[a-z]+)?)$/;
+
+/** Files a test runner executes when it runs (edits to them followed by a test command = running new code). */
+export function executedByTests(p: string): boolean {
+  const l = p.toLowerCase().replace(/\\/g, '/'); const base = l.split('/').pop() ?? l;
+  return !!sensitivePath(p) || /(^|[._-])(test|tests|spec)([._-]|$)/.test(base) || /(^|\/)(tests?|__tests__|spec)\//.test(l);
 }
 
 export function normPath(p: unknown): string | undefined {

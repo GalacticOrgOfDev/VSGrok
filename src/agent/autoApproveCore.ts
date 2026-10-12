@@ -23,7 +23,7 @@ export function commandAllowed(cmd: string, allowlist: readonly string[]): boole
   return allowlist.some(a => typeof a === 'string' && a.trim().replace(/[ \t]+/g, ' ') === c);
 }
 
-export interface AutoContext { level: AutoLevel; allowlist: readonly string[]; /** For edit requests: the path is a writable workspace file (symlinks resolved). */ writable?: boolean }
+export interface AutoContext { level: AutoLevel; allowlist: readonly string[]; /** An auto-approved edit touched a file test runners execute since the user last saw a command card. */ execDirty?: boolean; /** For edit requests: the path is a writable workspace file (symlinks resolved). */ writable?: boolean }
 
 /** Decide whether a request is auto-approved. `why` explains a "no" for the task log. */
 export function autoDecision(req: ApprovalRequest, ctx: AutoContext): { auto: boolean; why: string } {
@@ -45,6 +45,7 @@ export function autoDecision(req: ApprovalRequest, ctx: AutoContext): { auto: bo
     case 'command':
       if (ctx.level !== 'editsAndCommands') { return { auto: false, why: 'commands need approval at this level' }; }
       if (!commandAllowed(req.command, ctx.allowlist)) { return { auto: false, why: 'command not on the allowlist' }; }
+      if (ctx.execDirty) { return { auto: false, why: 'first command after auto-approved edits to files the tests run' }; }
       return { auto: true, why: 'allowlisted command' };
   }
   return { auto: false, why: req.kind === 'mcp' ? 'MCP tools always ask (unless always-allowed)' : 'unknown request' };

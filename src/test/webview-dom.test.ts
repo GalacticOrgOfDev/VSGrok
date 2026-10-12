@@ -349,7 +349,7 @@ test('MCP approval card: server › tool, source, arguments, Always allow sends 
   const card = d.querySelector('.approval-card[data-kind=mcp]') as HTMLElement;
   assert.equal(card.querySelector('.approval-head')!.textContent, '🔌 Grok wants to use an MCP tool');
   assert.equal(card.querySelector('.approval-path')!.textContent, 'github › create_issue');
-  assert.match(card.querySelector('.approval-source')!.textContent!, /vsgrok-mcp\.json/); assert.ok(card.querySelector('.approval-source.repo'));
+  assert.match(card.querySelector('.approval-source')!.textContent!, /defined by this repo/); assert.ok(card.querySelector('.approval-source.repo'));
   assert.match(card.querySelector('pre')!.textContent!, /"title": "x"/);
   const cb = card.querySelector('.approval-always input') as HTMLInputElement;
   assert.match(card.querySelector('.approval-always')!.textContent!, /Always allow create_issue/);

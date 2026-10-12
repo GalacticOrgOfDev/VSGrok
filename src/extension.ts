@@ -60,13 +60,21 @@ export function activate(context: vscode.ExtensionContext) {
     await mcpManager.ready();
     const st = mcpManager.status();
     type It = vscode.QuickPickItem & { act?: string };
-    const icon: Record<string, string> = { ready: '$(pass)', error: '$(error)', connecting: '$(loading~spin)', disabled: '$(circle-slash)' };
-    const items: It[] = st.servers.map(s => ({ label: `${icon[s.status]} ${s.name}`, description: `${s.type} · ${s.source}${s.status === 'ready' ? ` · ${s.tools.length} tools` : ''}`, detail: s.status === 'error' ? s.error : s.tools.join(', ').slice(0, 300) || undefined }));
+    const icon: Record<string, string> = { ready: '$(pass)', error: '$(error)', connecting: '$(loading~spin)', disabled: '$(circle-slash)', needsConsent: '$(shield)' };
+    const items: It[] = st.servers.map(s => ({ label: `${icon[s.status]} ${s.name}`, description: `${s.type} · ${s.source}${s.status === 'ready' ? ` · ${s.tools.length} tools` : ''}`, detail: s.status === 'error' ? s.error : s.status === 'needsConsent' ? 'From this repo — not started until you allow it' : s.tools.join(', ').slice(0, 300) || undefined }));
+    const pending = mcpManager.pendingConsent();
+    if (pending.length) { items.unshift({ label: `$(shield) Review and start ${pending.length} server${pending.length > 1 ? 's' : ''} from this repo…`, act: 'consent' }); }
     if (!items.length) { items.push({ label: 'No MCP servers configured', description: 'vsgrok.mcp.servers or ' + WORKSPACE_FILE }); }
     for (const e of st.errors) { items.push({ label: `$(warning) ${e}` }); }
-    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, { label: '$(refresh) Reconnect all', act: 'reload' }, { label: '$(settings-gear) Edit user MCP servers', act: 'settings' }, { label: `$(json) Edit ${WORKSPACE_FILE}`, act: 'ws' }, { label: '$(trash) Forget all "Always allow" choices', act: 'reset' });
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, { label: '$(refresh) Reconnect all', act: 'reload' }, { label: '$(settings-gear) Edit user MCP servers', act: 'settings' }, { label: `$(json) Edit ${WORKSPACE_FILE}`, act: 'ws' }, { label: '$(trash) Forget all "Always allow" choices', act: 'reset' }, { label: '$(shield) Stop trusting this repo\'s MCP servers', act: 'revoke' });
     const pick = await vscode.window.showQuickPick(items, { title: 'VSGrok MCP servers', placeHolder: 'Tools from ready servers are offered to Grok when Agent is on; each call asks first.' });
     if (pick?.act === 'reload') { mcpManager.reload(); }
+    if (pick?.act === 'revoke') { await mcpManager.revokeRepoConsent(); vscode.window.setStatusBarMessage('$(check) This repo\'s MCP servers will ask again', 4000); }
+    if (pick?.act === 'consent') {
+      // An explicit, user-invoked security consent: a modal is the right tool here.
+      const ok = await vscode.window.showWarningMessage(`Start ${pending.length} MCP server(s) defined by this repo?`, { modal: true, detail: 'These programs run on your machine with your permissions. Only allow them if you trust this repository.\n\n' + pending.map(p => `• ${p.name}: ${p.launch}`).join('\n') + '\n\nYou will be asked again if their configuration changes.' }, 'Start servers');
+      if (ok === 'Start servers') { await mcpManager.grantConsent(pending.map(p => p.name)); }
+    }
     if (pick?.act === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettingsJson', { revealSetting: { key: 'vsgrok.mcp.servers' } }); }
     if (pick?.act === 'reset') { await mcpManager.resetAlwaysAllow(); vscode.window.setStatusBarMessage('$(check) MCP "Always allow" choices cleared', 4000); }
     if (pick?.act === 'ws') {

@@ -11,7 +11,7 @@ import { proposeEdit, proposeRangeEdit } from './proposals';
 import { ApprovalBroker, setApprover, setAutoPolicy, ApprovalRequest, runInTaskScope } from './agent/approvals';
 import { autoDecision, budgetExceeded, parseLevel, DEFAULT_COMMAND_ALLOWLIST } from './agent/autoApproveCore';
 import { TaskTracker, setTaskTracker } from './agent/taskTracker';
-import { sensitivePath } from './agent/planCore';
+import { sensitivePath, executedByTests } from './agent/planCore';
 import { checkWritable } from './security';
 import { ChatStore, newChatId } from './chatStore';
 import { mcp } from './mcp';
@@ -54,7 +54,7 @@ const TASK_PROMPT =
 
 interface TaskRun {
   id: string; goal: string; tracker: TaskTracker; started: number; maxSteps: number;
-  steps: number; tokens: number; costUsd?: number; autoApproved: number; asked: number; outcome?: string;
+  steps: number; tokens: number; costUsd?: number; autoApproved: number; asked: number; outcome?: string; execDirty?: boolean;
 }
 
 /** Per-tab chat state that is swapped when switching tabs or reopening a saved chat. */
@@ -778,6 +778,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private consentHinted = false;
   private task?: TaskRun;
   /** Finished tasks that can still be undone (most recent 5). */
   private taskTrackers = new Map<string, TaskTracker>();
@@ -833,7 +834,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         writable = (await checkWritable(resolveInWorkspace(req.path))).ok && !sensitivePath(req.path);
       } catch { writable = false; }
     }
-    const d = autoDecision(req, { level, allowlist, writable });
+    const d = autoDecision(req, { level, allowlist, writable, execDirty: t.execDirty });
+    if (d.auto && req.kind === 'edit' && executedByTests(req.path)) { t.execDirty = true; }
+    if (d.auto && req.kind === 'plan' && req.files.some(f => executedByTests(f.path))) { t.execDirty = true; }
+    if (!d.auto && req.kind === 'command') { t.execDirty = false; }
     const what = req.kind === 'command' ? `\`${req.command}\`` : req.kind === 'edit' ? req.path : req.kind === 'mcp' ? `${req.server}/${req.tool}` : `plan (${req.files.length} files)`;
     if (d.auto) { t.autoApproved++; } else { t.asked++; }
     this.post({ type: 'taskLog', id: t.id, auto: d.auto, text: d.auto ? `Auto-approved ${what} (${d.why})` : `Asking you: ${what} (${d.why})` });
@@ -915,6 +919,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.convMode = mode;
 
     if (agent && mcp()) { await Promise.race([mcp()!.ready(), new Promise(r => setTimeout(r, 3000))]); }
+    if (agent && !this.consentHinted && mcp()?.pendingConsent().length) {
+      this.consentHinted = true;
+      this.post({ type: 'toast', msg: `${mcp()!.pendingConsent().length} MCP server(s) from this repo are not started. Review them in VSGrok: MCP Servers.` });
+    }
     const fnTools = [...toResponsesTools(agent ? TOOL_SPECS : READ_TOOL_SPECS), ...(agent ? mcp()?.functionTools() ?? [] : [])];
     const tools: ResponseTool[] = [...fnTools, ...serverTools()];
     let tid = 0; let thinking = '';

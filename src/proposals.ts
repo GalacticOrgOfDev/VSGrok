@@ -1,5 +1,6 @@
 // Proposed edits: approved or denied on an in-chat card (View diff opens vscode.diff on a vsgrok-proposed: doc); applied only after Approve.
 import * as vscode from 'vscode';
+import { sensitivePath } from './agent/planCore';
 import { trackBefore } from './agent/taskTracker';
 import { requestApproval, lineDelta } from './agent/approvals';
 
@@ -42,7 +43,7 @@ export async function proposeEdit(target: vscode.Uri, newContent: string, reason
   let oldText = '';
   if (exists) { try { oldText = (await vscode.workspace.openTextDocument(target)).getText(); } catch { /* binary/unreadable */ } }
   const { added, removed } = lineDelta(oldText, newContent);
-  const accepted = await requestApproval({ kind: 'edit', path: rel, reason, isNew: !exists, added, removed }, { signal, onViewDiff: showDiff });
+  const accepted = await requestApproval({ kind: 'edit', path: rel, reason, isNew: !exists, added, removed, ...(sensitivePath(vscode.workspace.asRelativePath(target, false)) ? { warn: sensitivePath(vscode.workspace.asRelativePath(target, false)) } : {}) }, { signal, onViewDiff: showDiff });
   const choice = accepted ? 'Accept' : 'Reject';
   provider.contents.delete(proposed.toString());
   provider.contents.delete(left.toString());

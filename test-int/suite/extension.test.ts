@@ -794,8 +794,13 @@ suite('VSGrok in VS Code', () => {
       assert.strictEqual(by('echo').status, 'ready', JSON.stringify(st)); assert.deepStrictEqual(by('echo').tools, ['echo', 'add.numbers']);
       assert.strictEqual(by('web').status, 'ready', JSON.stringify(st)); assert.strictEqual(by('web').type, 'http');
       assert.strictEqual(by('down').status, 'error');
-      assert.strictEqual(by('wsecho').source, 'workspace'); assert.strictEqual(by('wsecho').status, 'ready');
-      assert.match(st.errors.join('\n'), /echo: defined in settings and \.vscode\/vsgrok-mcp\.json; the settings one is used/);
+      assert.strictEqual(by('wsecho').source, 'workspace'); assert.strictEqual(by('wsecho').status, 'needsConsent', 'repo servers never start silently');
+      assert.deepStrictEqual(api.mcp.pendingConsent().map((p: { name: string }) => p.name), ['wsecho']);
+      assert.match(api.mcp.pendingConsent()[0].launch, /^node .*mcp-echo-server\.cjs/);
+      await api.mcp.grantConsent();
+      const st2 = api.mcp.status(); const by2 = (n: string) => st2.servers.find((x: { name: string }) => x.name === n);
+      assert.strictEqual(by2('wsecho').status, 'ready'); assert.strictEqual(by2('echo').status, 'ready');
+      assert.match(st.errors.join('\n'), /echo: defined in settings and this repo; the settings one is used/);
       const names = api.mcp.functionTools().map((t: { name: string }) => t.name);
       assert.ok(names.includes('mcp__echo__echo') && names.includes('mcp__web__add_numbers') && names.includes('mcp__wsecho__echo'), names.join());
       await withMock('mock-text', async () => {
@@ -837,6 +842,25 @@ suite('VSGrok in VS Code', () => {
         assert.ok(!req.tools?.some(t => String(t.name).startsWith('mcp__')));
       });
       await api.chat.testReceive({ type: 'setAgent', enabled: true });
+      // H1: workspace-level settings values are repo servers (not "settings") and wait for consent.
+      await c.update('mcp.servers', { wsset: { command: 'node', args: [serverJs] } }, vscode.ConfigurationTarget.Workspace);
+      api.mcp.reload(); await api.mcp.ready();
+      let s3 = api.mcp.status(); const ws3 = s3.servers.find((x: { name: string }) => x.name === 'wsset');
+      assert.deepStrictEqual({ source: ws3.source, status: ws3.status }, { source: 'workspace', status: 'needsConsent' });
+      assert.ok(s3.servers.find((x: { name: string }) => x.name === 'echo').source === 'settings');
+      await c.update('mcp.servers', undefined, vscode.ConfigurationTarget.Workspace);
+      // H2: changing a consented repo server's config (here: an env value) needs consent again.
+      await vscode.workspace.fs.writeFile(wsFile, Buffer.from(JSON.stringify({ servers: { wsecho: { command: 'node', args: [serverJs], env: { ECHO_LABEL: 'changed' } } } })));
+      api.mcp.reload(); await api.mcp.ready();
+      s3 = api.mcp.status();
+      assert.strictEqual(s3.servers.find((x: { name: string }) => x.name === 'wsecho').status, 'needsConsent');
+      // H2: an agent edit of the MCP config is flagged on the card and never auto-approved.
+      const n0 = posts('approvalRequest').length;
+      const pe = vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_edit', { path: '.vscode/vsgrok-mcp.json', content: '{"servers":{}}' });
+      const card = await until(() => posts('approvalRequest')[n0]);
+      assert.match(card.request.warn, /MCP servers/);
+      await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'deny' }); await pe;
+      await api.mcp.revokeRepoConsent();
     } finally {
       await api.mcp.resetAlwaysAllow();
       await vscode.workspace.fs.delete(wsFile);
