@@ -16,15 +16,19 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 
 ## Setup
 
-1. Get an API key at <https://console.x.ai>.
-2. Run **VSGrok: Set API Key** (stored in VS Code SecretStorage, never in settings). **VSGrok: Clear API Key** removes it.
-3. Open the VSGrok view in the activity bar.
+1. Open the VSGrok view in the activity bar. Without a key it shows a **Connect Grok** card.
+2. Click **Get an API key** (or run **VSGrok: Sign In / Get API Key**). It opens the [xAI Console](https://console.x.ai/team/default/api-keys), where you sign in with your X or xAI account and create a key.
+3. Click **Paste API key** (or **VSGrok: Set API Key**). It is stored in VS Code SecretStorage, never in settings. **VSGrok: Clear API Key** removes it.
+4. Pick a model from the dropdown in the chat header or with **VSGrok: Select Model**. The list comes live from xAI's `GET /v1/models` (cached for an hour), with a built-in list when offline or before a key is set.
+
+**SuperGrok / X Premium:** xAI's subscription sign-in is currently limited to partner apps xAI has approved (for example [OpenCode](https://x.ai/news/grok-opencode)), with no public way for other apps to register. VSGrok therefore uses an API key, which xAI bills per token separately from a SuperGrok subscription. If xAI opens subscription sign-in to third-party apps, VSGrok will add it.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
 | `vsgrok.model` | `grok-4.7` | Model id for chat / commands / agent ([model list](https://docs.x.ai/docs/models)) |
+| `vsgrok.theme` | `galactic` | `galactic` (deep-space Grok look) or `vscode` (plain theme colors). High-contrast themes always use VS Code colors. |
 | `vsgrok.baseUrl` | `https://api.x.ai/v1` | OpenAI-compatible endpoint |
 | `vsgrok.temperature` / `vsgrok.maxTokens` | `0.3` / `8192` | |
 | `vsgrok.requestTimeoutSeconds` | `120` | Idle timeout |
@@ -50,4 +54,4 @@ npx @vscode/vsce package --no-dependencies
 
 ## Status
 
-v0.2.0. Built and unit-tested without a live API key; please report issues.
+v0.3.0. Built and unit-tested without a live API key; please report issues.
