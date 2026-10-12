@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { streamChat, GrokApiError } from './xai/client';
-import { requestOptions } from './config';
+import { requestOptions, apiMode } from './config';
+import { streamResponse } from './xai/responses';
+import { COMMIT_FORMAT, renderCommitMessage } from './xai/commit';
 import { stripFences } from './xai/sse';
 import { proposeRangeEdit } from './proposals';
 import { setBusy } from './status';
@@ -18,14 +20,22 @@ export function buildCommandPrompt(action: CodeAction, code: string, language: s
   }
 }
 
-/** Ask Grok for a one-shot replacement with progress + cancel; return text or undefined. */
-async function oneShot(ctx: vscode.ExtensionContext, title: string, system: string, user: string): Promise<string | undefined> {
+/** Ask Grok for a one-shot answer with progress + cancel; return text or undefined. Uses the Responses API unless vsgrok.api = "chat". */
+async function oneShot(ctx: vscode.ExtensionContext, title: string, system: string, user: string, textFormat?: Record<string, unknown>): Promise<string | undefined> {
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_p, token) => {
     const abort = new AbortController();
     const sub = token.onCancellationRequested(() => abort.abort());
     setBusy(true);
     try {
-      const res = await streamChat([{ role: 'system', content: system }, { role: 'user', content: user }], await requestOptions(ctx, { signal: abort.signal, temperature: 0.2 }));
+      const o = await requestOptions(ctx, { signal: abort.signal, temperature: 0.2 });
+      if (apiMode() === 'chat') {
+        const res = await streamChat([{ role: 'system', content: system }, { role: 'user', content: user }], o);
+        return res.content;
+      }
+      const res = await streamResponse({
+        ...o, input: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        tools: undefined, maxOutputTokens: o.maxTokens, store: false, textFormat,
+      });
       return res.content;
     } catch (e) {
       if ((e as GrokApiError).kind !== 'aborted') { void vscode.window.showErrorMessage((e as Error).message); }
@@ -45,11 +55,13 @@ export async function generateCommitMessage(ctx: vscode.ExtensionContext, arg?: 
   if (!repo) { void vscode.window.showWarningMessage('No Git repository found.'); return; }
   let diff = await repo.diff(true);
   if (!diff.trim()) { void vscode.window.showWarningMessage('No staged changes. Stage files first.'); return; }
-  if (diff.length > 60000) { diff = diff.slice(0, 60000) + '\n…[diff truncated]'; }
+  if (diff.length > 400000) { diff = diff.slice(0, 400000) + '\n…[diff truncated]'; }
   const out = await oneShot(ctx, 'Grok: writing commit message…',
-    'Write a git commit message for the staged diff. Conventional style: a concise imperative subject line under 72 chars, blank line, then short bullet body if useful. Output only the message, no fences.',
-    diff);
-  if (out) { repo.inputBox.value = stripFences(out).trim(); }
+    apiMode() === 'chat'
+      ? 'Write a git commit message for the staged diff. Conventional style: a concise imperative subject line under 72 chars, blank line, then short bullet body if useful. Output only the message, no fences.'
+      : 'Write a git commit message for the staged diff. subject: conventional-commit style, imperative, under 72 chars. body: short bullet points only if they add information.',
+    diff, apiMode() === 'chat' ? undefined : COMMIT_FORMAT);
+  if (out) { repo.inputBox.value = renderCommitMessage(out); }
 }
 
 export async function fixDiagnostic(ctx: vscode.ExtensionContext, uri: vscode.Uri, range: vscode.Range, message: string) {
