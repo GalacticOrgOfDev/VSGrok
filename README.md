@@ -6,14 +6,20 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 
 - **Streaming chat sidebar** — markdown rendered as it streams, Stop button (or `Esc`), regenerate, copy, per-reply model / token / latency footer.
 - **Code-block actions** — every code block has **Copy**, **Insert** (at cursor / replace selection) and **Apply as diff** (opens a diff of the target file vs. Grok's proposal; nothing is written until you click **Accept**). A fence like ` ```ts path=src/a.ts ` targets that file.
-- **Context chips** — attach the current file, the current selection (shown automatically, click to pin), workspace files via quick pick, or files dragged from the Explorer. `@file` and `@workspace` in a message also still work. Large files are truncated at 100k characters.
+- **Context chips** — attach the current file, the current selection (shown automatically, click to pin), workspace files via quick pick, or files dragged from the Explorer. `@file` and `@workspace` in a message also still work. Attached files are sent in full up to `vsgrok.context.maxFileChars` (default 1,000,000 characters; grok-4.7 has a 500k-token context window).
 - **Workspace tools in every chat** — Grok can always call `get_workspace_overview` (folder, top-level tree, package.json/README summary, open editors, git branch/status), `read_file`, `list_files` and `search_workspace` (read-only, run directly, restricted to the workspace). It keeps calling tools until it has an answer (cap: `vsgrok.agent.maxSteps`), and each call shows in the chat as a collapsible line (e.g. *✓ Read src/a.ts*) with its output.
 - **Agent** (header toggle, on by default, or *VSGrok: Start Agent Task*) adds the write tools:
   - `propose_edit` — always shown as a diff and applied only if you accept,
   - `run_command` — runs in the workspace root only after you confirm a modal prompt.
-- **Grok reasoning & prompt caching** — `vsgrok.reasoningEffort` sets xAI's `reasoning_effort` (low / medium / high / xhigh; [docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)). If the API streams reasoning text it shows as a collapsible *Thought* line. Each chat sends an `x-grok-conv-id` header so follow-up turns reuse xAI's prompt cache ([docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits)); reasoning and cached token counts appear under each reply.
+- **Built on xAI's Responses API** (`POST /v1/responses`, [docs](https://docs.x.ai/developers/rest-api-reference/inference/responses)) — chat, agent mode and commands stream Responses events; client-side tools use `function_call` / `function_call_output` items ([function calling](https://docs.x.ai/developers/tools/function-calling)).
+- **Server-side conversation history** — follow-up turns send only the new input plus `previous_response_id` ([chaining](https://docs.x.ai/developers/model-capabilities/text/generate-text#chaining-the-conversation)). VSGrok also keeps every returned item (including reasoning `encrypted_content`) verbatim, so if a stored response has expired or you set `vsgrok.responses.store` to `false`, it resends the full history unchanged ([encrypted reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning#encrypted-reasoning-content)). Long chats are compacted with `POST /v1/responses/compact` once input reaches `vsgrok.responses.compactAtTokens` ([context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction)). There is no fixed message limit.
+- **Web Search and X Search** — header toggles (**Web**, **𝕏**) or `vsgrok.tools.webSearch` / `vsgrok.tools.xSearch` enable xAI's built-in server-side tools ([web search](https://docs.x.ai/developers/tools/web-search), [X search](https://docs.x.ai/developers/tools/x-search)). Searches show as activity lines, and the sources come back as `url_citation` annotations ([citations](https://docs.x.ai/developers/tools/citations)) and are listed as links under the answer. xAI bills these tools separately.
+- **Code Execution (opt-in)** — `vsgrok.tools.codeExecution` adds xAI's `code_interpreter` tool, which runs Python in xAI's sandbox, not on your machine ([docs](https://docs.x.ai/developers/tools/code-execution)).
+- **Reasoning summaries** — `response.reasoning_summary_text.delta` streams into a collapsible *Thought* line. `vsgrok.reasoningEffort` sets `reasoning.effort` (low / medium / high / xhigh; [docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)).
+- **Prompt caching and cost** — each chat sends an `x-grok-conv-id` header so turns reuse xAI's prompt cache ([docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits)). Under each reply: output, reasoning and cached tokens, context size and cost (from `usage.cost_in_usd_ticks`).
+- **Chat Completions fallback** — `vsgrok.api: "chat"` switches back to the legacy `/v1/chat/completions` path (no server-side tools, citations or compaction; history is kept locally).
 - **Inline ghost-text completions** — debounced (default 275 ms), cancelled when you keep typing, toggle with *VSGrok: Toggle Inline Completions* or `vsgrok.inlineCompletions.enabled`.
-- **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar); **Fix with Grok** Quick Fix on diagnostics (lightbulb), applied through the same diff + Accept flow.
+- **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar; uses [structured outputs](https://docs.x.ai/developers/model-capabilities/text/structured-outputs) with a `{subject, body[]}` JSON schema); **Fix with Grok** Quick Fix on diagnostics (lightbulb), applied through the same diff + Accept flow.
 
 ## Setup
 
@@ -30,7 +36,12 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 |---|---|---|
 | `vsgrok.model` | `grok-4.7` | Model id for chat / commands / agent ([model list](https://docs.x.ai/docs/models)) |
 | `vsgrok.theme` | `galactic` | `galactic` (deep-space Grok look) or `vscode` (plain theme colors). High-contrast themes always use VS Code colors. |
-| `vsgrok.baseUrl` | `https://api.x.ai/v1` | OpenAI-compatible endpoint |
+| `vsgrok.api` | `responses` | `responses` (Responses API) or `chat` (legacy Chat Completions fallback). Inline completions always use Chat Completions. |
+| `vsgrok.responses.store` | `true` | Store responses on xAI for 30 days and chain with `previous_response_id`; `false` sends `store: false` and resends local history |
+| `vsgrok.responses.compactAtTokens` | `300000` | Compact the chat when input reaches this many tokens (0 = off) |
+| `vsgrok.tools.webSearch` / `vsgrok.tools.xSearch` / `vsgrok.tools.codeExecution` | `false` | xAI server-side tools (billed by xAI) |
+| `vsgrok.context.maxFileChars` | `1000000` | Per-file cap for attached context |
+| `vsgrok.baseUrl` | `https://api.x.ai/v1` | xAI API base URL |
 | `vsgrok.temperature` / `vsgrok.maxTokens` | `0.3` / `8192` | |
 | `vsgrok.requestTimeoutSeconds` | `120` | Idle timeout |
 | `vsgrok.agent.enabledByDefault` / `vsgrok.agent.maxSteps` | `true` / `15` | Read-only workspace tools are always on; Agent adds edits (diff + Accept) and commands (confirm) |
@@ -41,6 +52,8 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - Requests go directly from your machine to the configured base URL (default `api.x.ai`). There is no VSGrok server and no telemetry.
 - What is sent: your messages, attached context (files/selections you attach, or that agent tools read), and for inline completions up to ~6,000 characters before and ~2,000 after the cursor in the current file. Turn inline completions off if you don't want code sent while typing.
 - xAI's handling of API data is governed by xAI's own terms and privacy policy.
+- With `vsgrok.responses.store` on (default), xAI stores each response for 30 days so chats can continue by id. Turn it off to send `store: false`.
+- Web Search, X Search and Code Execution run on xAI's servers only when you enable them.
 - Usage is billed to your xAI account.
 
 ## Development
@@ -48,11 +61,11 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 ```bash
 pnpm install
 pnpm run check-types && pnpm run lint
-pnpm test            # unit tests (SSE parsing, tool-call assembly, completion cleanup)
+pnpm test            # unit tests incl. a fake Responses-API server (streaming events, function calls, chaining, compaction)
 node esbuild.mjs     # or --watch / --production
 npx @vscode/vsce package --no-dependencies
 ```
 
 ## Status
 
-v0.3.0. Built and unit-tested without a live API key; please report issues.
+v0.4.0. Built and unit-tested against a local fake server, not yet against the live xAI API; please report issues.
