@@ -189,19 +189,41 @@ body.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light){
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-btn:hover:not(:disabled){border-color:var(--g-cyan);box-shadow:var(--g-glow)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state]{box-shadow:none}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state=approved]{border-color:rgba(63,185,80,.6)}
-/* Error cards */
-.error-card{margin:6px 0;padding:8px 10px;border-radius:8px;border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));background:var(--vscode-inputValidation-errorBackground,var(--vscode-editorWidget-background));font-size:12px}
-.error-head{display:flex;gap:6px;align-items:center;font-weight:600}
-.error-hint{margin-top:3px;color:var(--vscode-descriptionForeground)}
+/* Error cards (severity via data-sev: error | warn | info; 4px left bar keeps it readable in HC) */
+.error-card{margin:6px 0;padding:8px 10px;border-radius:8px;border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));border-left-width:4px;background:var(--vscode-inputValidation-errorBackground,var(--vscode-editorWidget-background));font-size:12px}
+.error-card[data-sev=warn]{border-color:var(--vscode-inputValidation-warningBorder,var(--vscode-editorWarning-foreground));background:var(--vscode-inputValidation-warningBackground,var(--vscode-editorWidget-background))}
+.error-card[data-sev=info]{border-color:var(--vscode-focusBorder);background:var(--vscode-editorWidget-background)}
+.message.assistant .error-card{margin:6px 0 0}
+.error-head{display:flex;gap:6px;align-items:flex-start;font-weight:600}
+.error-head .error-title{min-width:0;overflow-wrap:anywhere}
+.error-hint{margin-top:3px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere}
 .error-detail{margin-top:4px;font-size:11px}
 .error-detail summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
 .error-detail pre{margin:4px 0 0;padding:6px;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow:auto;background:var(--vscode-textCodeBlock-background);border-radius:4px}
-.error-card[data-kind=rate_limit],.error-card[data-kind=offline],.error-card[data-kind=timeout],.error-card[data-kind=network]{border-color:var(--vscode-inputValidation-warningBorder,var(--vscode-editorWarning-foreground))}
-.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card{background:linear-gradient(135deg,rgba(255,92,122,.10),rgba(139,123,255,.06)),var(--g-panel);border:1px solid rgba(255,92,122,.5);border-radius:12px;color:var(--g-text);backdrop-filter:blur(4px)}
-.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=rate_limit],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=offline],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=timeout],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=network]{border-color:rgba(255,210,122,.55);background:linear-gradient(135deg,rgba(255,210,122,.08),rgba(139,123,255,.06)),var(--g-panel)}
+.error-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.error-card .error-btn{padding:3px 12px;border-radius:4px;border:1px solid var(--vscode-button-border,transparent);cursor:pointer;font-size:12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.error-card .error-btn.primary-action{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.error-card .error-btn:hover{filter:brightness(1.1)}
+body.vscode-high-contrast .error-card,body.vscode-high-contrast-light .error-card{border-color:var(--vscode-contrastBorder);background:transparent}
+body.vscode-high-contrast .error-card .error-btn,body.vscode-high-contrast-light .error-card .error-btn{border-color:var(--vscode-contrastBorder)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card{background:linear-gradient(135deg,rgba(255,92,122,.10),rgba(139,123,255,.06)),var(--g-panel);border:1px solid rgba(255,92,122,.5);border-left-width:4px;border-radius:12px;color:var(--g-text);backdrop-filter:blur(4px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-sev=warn]{border-color:rgba(255,210,122,.55);background:linear-gradient(135deg,rgba(255,210,122,.08),rgba(139,123,255,.06)),var(--g-panel)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-sev=info]{border-color:rgba(79,209,255,.45);background:linear-gradient(135deg,rgba(79,209,255,.08),rgba(139,123,255,.08)),var(--g-panel)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-hint,.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-detail summary{color:var(--g-dim)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-detail pre{background:#070912;border:1px solid var(--g-border)}
-/* Project rules indicator (header) */
-.rules-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:999px;font-size:11px;cursor:pointer;border:1px solid var(--vscode-focusBorder);background:transparent;color:inherit;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card .error-btn{background:rgba(255,255,255,.04);color:var(--g-text);border:1px solid var(--g-border);border-radius:999px;transition:border-color .15s,box-shadow .15s}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card .error-btn.primary-action{background:linear-gradient(135deg,var(--g-cyan),var(--g-violet));color:#05060d;border-color:transparent;font-weight:600}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-sev=warn] .error-btn.primary-action{background:linear-gradient(135deg,#ffd27a,#ffb86b)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card .error-btn:hover{border-color:var(--g-cyan);box-shadow:var(--g-glow);filter:none}
+
+/* Header: wraps on narrow sidebars; Rules chip collapses to its icon via container query */
+#header{flex-wrap:wrap;container-type:inline-size}
+.header-right{flex-wrap:wrap;min-width:0;justify-content:flex-end}
+.rules-chip{display:inline-flex;align-items:center;gap:2px;padding:1px 7px;border-radius:999px;font-size:11px;cursor:pointer;border:1px solid var(--vscode-charts-purple,var(--vscode-textLink-foreground));background:transparent;color:inherit;white-space:nowrap}
 .rules-chip[hidden]{display:none}
+@container (max-width:300px){.rules-chip .lbl,.rules-chip .cnt{display:none}}
+body.vscode-high-contrast .rules-chip,body.vscode-high-contrast-light .rules-chip{border-color:var(--vscode-contrastBorder);box-shadow:none}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .rules-chip{border-color:rgba(139,123,255,.6);color:var(--g-text);background:rgba(139,123,255,.12);box-shadow:0 0 10px rgba(139,123,255,.25)}
+.header-left{min-width:0;flex-shrink:1}
+.header-left .brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@container (max-width:260px){.header-left .brand-sub{display:none}}

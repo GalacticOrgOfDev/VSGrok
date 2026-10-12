@@ -184,7 +184,7 @@
     }
     t.el.appendChild(foot);
     if (state.streaming === t.id) { state.streaming = null; setSendMode(false); }
-    announce.textContent = st === 'done' ? 'Grok finished responding.' : st === 'stopped' ? 'Stopped.' : 'Error: ' + (extra && extra.msg);
+    announce.textContent = st === 'done' ? 'Grok finished responding.' : st === 'stopped' ? 'Stopped.' : 'Error: ' + VSGrokCards.errorSpec(extra || {}, true).title;
   }
   function btn(txt, fn) { const b = document.createElement('button'); b.className = 'foot-btn'; b.textContent = txt; b.addEventListener('click', () => fn(b)); return b; }
 
@@ -330,37 +330,26 @@
     stick(wasNear);
   }
 
-  // Friendly error cards (API errors from chat, commands and fixes). Text only.
-  const ERR = {
-    missing_key: ['🔑', 'Connect Grok', 'No xAI API key is set yet.'],
-    auth: ['🔑', 'xAI rejected the API key', 'The key is invalid, revoked, or lacks access to this model.'],
-    quota_exceeded: ['💳', 'Out of xAI credits', 'Your xAI account has no credits or hit its spending limit.'],
-    rate_limit: ['⏳', 'Grok is rate-limited', 'xAI asked us to slow down. VSGrok already retried with backoff.'],
-    server: ['🛰', 'xAI is having trouble', 'xAI returned a server error. VSGrok already retried.'],
-    offline: ['📡', "You're offline", "VSGrok can't reach api.x.ai. Check your connection, proxy or vsgrok.baseUrl."],
-    network: ['📡', 'Connection dropped', 'The connection to xAI was interrupted.'],
-    timeout: ['⌛', 'Request timed out', 'xAI sent no data for too long. Try again, or raise vsgrok.requestTimeoutSeconds.'],
-    context_length: ['📚', 'Too much context', 'The request is larger than the model context window. Remove some context chips or start a new chat.'],
-    generic: ['⚠', 'Something went wrong', ''],
-  };
+  // Friendly error cards (API errors from chat, commands and fixes). Text only; view model in cards.js.
   function errorCard(e, inTurn) {
-    const kind = ERR[e.kind] ? e.kind : 'generic'; const d = ERR[kind];
-    const card = document.createElement('div'); card.className = 'error-card'; card.dataset.kind = kind; card.setAttribute('role', 'alert');
+    const v = VSGrokCards.errorSpec(e || {}, inTurn);
+    const card = document.createElement('div'); card.className = 'error-card'; card.dataset.kind = v.kind; card.dataset.sev = v.sev;
+    card.setAttribute('role', inTurn ? 'group' : 'alert'); // in-turn errors are announced once by finishTurn
+    card.setAttribute('aria-label', v.title);
     const head = document.createElement('div'); head.className = 'error-head';
-    const ic = document.createElement('span'); ic.className = 'error-icon'; ic.setAttribute('aria-hidden', 'true'); ic.textContent = d[0];
-    const ti = document.createElement('span'); ti.textContent = d[1] + (e.source ? ' · ' + String(e.source).replace(/^Grok: /, '').replace(/…$/, '') : '');
+    const ic = document.createElement('span'); ic.className = 'error-icon'; ic.setAttribute('aria-hidden', 'true'); ic.textContent = v.icon;
+    const ti = document.createElement('span'); ti.className = 'error-title'; ti.textContent = v.title + (v.source ? ' · ' + v.source : '');
     head.append(ic, ti); card.appendChild(head);
-    if (d[2]) { const h = document.createElement('div'); h.className = 'error-hint'; h.textContent = d[2]; card.appendChild(h); }
-    const det = document.createElement('details'); det.className = 'error-detail';
-    const sm = document.createElement('summary'); sm.textContent = 'Details' + (e.attempts > 1 ? ' (' + e.attempts + ' attempts)' : ''); det.appendChild(sm);
-    const pre = document.createElement('pre'); pre.textContent = String(e.msg || ''); det.appendChild(pre); card.appendChild(det);
-    const acts = document.createElement('div'); acts.className = 'approval-actions';
-    const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'approval-btn ' + cls; x.textContent = label; x.addEventListener('click', fn); acts.appendChild(x); };
-    if (kind === 'missing_key' || kind === 'auth') { b('Set API Key', 'approve', () => vscode.postMessage({ type: 'setApiKey' })); }
-    if (kind === 'quota_exceeded') { b('Open xAI Console', 'approve', () => vscode.postMessage({ type: 'openLink', url: 'https://console.x.ai' })); }
-    if (inTurn && kind !== 'missing_key') { b('Retry', kind === 'auth' || kind === 'quota_exceeded' ? 'deny' : 'approve', () => vscode.postMessage({ type: 'regenerate' })); }
-    b('Copy diagnostics', 'deny', () => vscode.postMessage({ type: 'copyDiagnostics' }));
-    if (!inTurn) { b('Dismiss', 'deny', () => card.remove()); }
+    if (v.hint) { const h = document.createElement('div'); h.className = 'error-hint'; h.textContent = v.hint; card.appendChild(h); }
+    if (v.details) {
+      const det = document.createElement('details'); det.className = 'error-detail';
+      const sm = document.createElement('summary'); sm.textContent = v.detailsLabel; det.appendChild(sm);
+      const pre = document.createElement('pre'); pre.textContent = v.details; det.appendChild(pre); card.appendChild(det);
+    }
+    const acts = document.createElement('div'); acts.className = 'error-actions';
+    const b = (label, primary, fn) => { const x = document.createElement('button'); x.className = 'error-btn' + (primary ? ' primary-action' : ''); x.textContent = label; x.addEventListener('click', fn); acts.appendChild(x); };
+    for (const a of v.actions) { b(a.label, a.primary, () => vscode.postMessage(a.msg)); }
+    if (v.dismissible) { b('Dismiss', false, () => card.remove()); }
     card.appendChild(acts);
     return card;
   }
@@ -420,11 +409,15 @@
       case 'updateCard': renderUpdateCard(m.card); break;
       case 'errorCard': { const wn = nearBottom(); if (m.card) { messagesEl.appendChild(errorCard(m.card, false)); } stick(wn); break; }
       case 'rules': {
-        const rc = $('rules-chip'); const files = Array.isArray(m.files) ? m.files : [];
-        rc.hidden = !files.length;
-        rc.textContent = '📜 Rules';
-        rc.title = files.length ? 'Project rules active: ' + files.join(', ') + (m.truncated ? ' (truncated to 20k chars)' : '') + '. Grok follows them in every chat. Click to open.' : '';
-        rc.setAttribute('aria-label', rc.title || 'Project rules');
+        const rc = $('rules-chip'); const v = VSGrokCards.rulesChip(m.files, m.truncated);
+        rc.hidden = v.hidden; rc.textContent = '';
+        if (!v.hidden) {
+          const ic = document.createElement('span'); ic.setAttribute('aria-hidden', 'true'); ic.textContent = '📜';
+          const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = ' ' + v.label;
+          const cnt = document.createElement('span'); cnt.className = 'cnt'; cnt.textContent = v.count;
+          rc.append(ic, lbl, cnt);
+        }
+        rc.title = v.tooltip; rc.setAttribute('aria-label', v.tooltip || 'Project rules');
         break;
       }
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }

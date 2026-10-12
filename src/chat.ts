@@ -109,15 +109,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <link rel="stylesheet" href="${u('style.css')}"><title>VSGrok</title></head>
 <body class="theme-${cfg().get<string>('theme') === 'vscode' ? 'vscode' : 'galactic'}">
 <div id="stars" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
-<div id="header"><div class="header-left"><img class="logo" src="${u('grok-icon.png')}" alt="" width="20" height="20"><span class="brand">Grok</span><span class="brand-sub">for VS Code</span></div>
+<header id="header"><div class="header-left"><img class="logo" src="${u('grok-icon.png')}" alt="" width="20" height="20"><span class="brand">Grok</span><span class="brand-sub">for VS Code</span></div>
 <div class="header-right">
 <select id="model" class="h-select" aria-label="Grok model" title="Grok model"></select>
-<button id="web-toggle" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
-<button id="x-toggle" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
+<button id="web-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
+<button id="x-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
-<button id="rules-chip" class="rules-chip" hidden aria-label="Project rules active"></button>
-<button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
-<button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
+<button id="rules-chip" type="button" class="rules-chip" hidden aria-label="Project rules"></button>
+<button id="settings-btn" type="button" class="h-btn icon" aria-label="Settings" aria-controls="settings-panel" aria-expanded="false">⚙</button>
+<button id="clear-btn" type="button" class="h-btn" aria-label="New chat">New</button></div></header>
 <section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
 <h2 id="welcome-title">Connect Grok</h2>
 <p>VSGrok talks to the official xAI API with your own API key. Usage is billed by xAI to your account, per token.</p>
@@ -135,6 +135,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <button id="send" class="send" aria-label="Send">➤</button></div>
 <script nonce="${nonce}" src="${u('marked.min.js')}"></script>
 <script nonce="${nonce}" src="${u('purify.min.js')}"></script>
+<script nonce="${nonce}" src="${u('cards.js')}"></script>
 <script nonce="${nonce}" src="${u('main.js')}"></script>
 </body></html>`;
   }
@@ -146,6 +147,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
     await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
     this.post({ type, card });
+  }
+
+  /** Open the active rule file; with several, let the user pick one. */
+  async openRules(): Promise<void> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri; const files = this.rules.current?.files ?? [];
+    if (!root || !files.length) { return; }
+    const f = files.length === 1 ? files[0] : (await vscode.window.showQuickPick(files.map(label => ({ label, description: label.startsWith('.vsgrok') ? 'folder rules' : 'root rules' })), { placeHolder: 'Open which project rules file?' }))?.label;
+    if (f) { await vscode.window.showTextDocument(vscode.Uri.joinPath(root, f), { preview: true }); }
   }
 
   private pushRules() {
@@ -214,9 +223,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case 'copyMessage': break;
       case 'copyDiagnostics': await vscode.commands.executeCommand('vsgrok.copyDiagnostics'); break;
-      case 'openRules': {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri; const f = this.rules.current?.files[0];
-        if (root && f) { await vscode.window.showTextDocument(vscode.Uri.joinPath(root, f), { preview: true }); }
+      case 'openRules': await this.openRules(); break;
+      case 'openSettings': {
+        const key = typeof m.key === 'string' && /^vsgrok\.[\w.]+$/.test(m.key) ? m.key : 'vsgrok';
+        await vscode.commands.executeCommand('workbench.action.openSettings', key);
         break;
       }
       case 'openLink': if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) { await vscode.env.openExternal(vscode.Uri.parse(m.url)); } break;

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- UI review fixes (UIGrok) for the error cards: amber background for rate-limit/offline/timeout/connection cards, a cyan info card for a missing key, a 4px left severity bar and contrast border in high-contrast themes, a single screen-reader announcement per error, wrapping for long titles, an inset look inside replies, Open Settings buttons (offline → API base URL, timeout → request timeout), a New chat button for too-much-context, a first-line hint for unknown errors, the "Rate limited by xAI" title, and their own `.error-btn` button styles.
+- Rules chip: purple border (no longer looks focused), contrast border in HC, "📜 Rules · N" count and "Project rules (N): … Added to every chat." tooltip, a quick pick when several rule files exist, collapses to the icon on narrow sidebars.
+- Header: wraps on narrow sidebars (container queries), semantic `<header>`, `type="button"` and `aria-controls` on header buttons; the Rules chip sits right before ⚙.
+- Card view-models moved to `media/webview/cards.js` (unit-tested).
+
 ## 0.6.1 — 2026-10-12
 - Fix: unit-test script failed on Node 22 in CI (`node --test` with a directory); now passes explicit test files. The v0.6.0 tag's release workflow stopped at this step, so 0.6.1 is the first published 0.6 build. No extension code changes.
 

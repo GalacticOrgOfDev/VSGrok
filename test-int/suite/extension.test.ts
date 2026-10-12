@@ -38,6 +38,22 @@ suite('VSGrok in VS Code', () => {
     assert.deepStrictEqual(r.files, ['VSGrok.md']);
   });
 
+  test('header markup: <header>, Rules chip right before the gear, cards.js loaded with nonce', async () => {
+    const html: string = api.chat['view'].webview.html;
+    assert.match(html, /<header id="header">[\s\S]*<\/header>/);
+    assert.match(html, /<button id="rules-chip"[^>]*><\/button>\s*<button id="settings-btn"[^>]*aria-controls="settings-panel"/);
+    assert.match(html, /<script nonce="[^"]+" src="[^"]*cards\.js"><\/script>\s*<script nonce="[^"]+" src="[^"]*main\.js">/);
+  });
+
+  test('Rules chip click opens the rules file; openSettings opens the Settings editor', async () => {
+    await api.chat.testReceive({ type: 'openRules' });
+    await until(() => vscode.window.activeTextEditor?.document.uri.path.endsWith('/VSGrok.md'));
+    await api.chat.testReceive({ type: 'openSettings', key: 'vsgrok.requestTimeoutSeconds' });
+    await until(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label === 'Settings');
+    await api.chat.testReceive({ type: 'openSettings', key: 'evil; rm -rf' }); // invalid key falls back to the vsgrok section
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  });
+
   test('approval card round trip: approve, deny, and Stop resolves as deny', async () => {
     // Drive the real agent tool path; the card is posted to the live chat webview and answered with its message protocol.
     const n0 = posts('approvalRequest').length;
