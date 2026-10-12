@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.14.1 — 2026-10-12
+Applies the JGrok security review and the UIGrok UI/a11y review of 0.9.0–0.14.0.
+
+**Security**
+- **MCP servers defined by a repo never start silently.**
+  - This covers `.vscode/vsgrok-mcp.json` and, new in this release, `vsgrok.mcp.servers` set in workspace or folder settings. Only your user settings count as "settings" now.
+  - Each repo server needs a one-time consent for that repo and its exact configuration: *VSGrok: MCP Servers → Review and start N servers from this repo…* shows exactly what will run.
+  - Changing the command, args, env values, cwd, URL or headers asks again. *Stop trusting this repo's MCP servers* revokes consent.
+  - A header **🛡 MCP** button appears while servers wait, and **⚠ MCP** when a server failed.
+- **Agent edits to MCP config and build/hook files** (`.vscode/vsgrok-mcp.json`, `.vscode/mcp.json`, and at any depth: `package.json`, `Makefile`, `conftest.py`, `pyproject.toml`, `setup.py`, `build.rs`, `Cargo.toml`, Gradle/Maven files, `.envrc`, `.husky/`, `.githooks/`, pre-commit and test-runner configs, …):
+  - They are flagged on the card ("⚠ … check it before approving") and never auto-approved.
+  - At `editsAndCommands`, the first command after an auto-approved edit to a file that tests execute now asks.
+- **MCP:**
+  - A timed-out or failed connect closes its transport and child process; stdio servers are killed on shutdown.
+  - "Always allow" is keyed by source, repo and a full config hash (env and header values hashed), and is no longer offered for repo servers.
+  - The approval card shows the complete arguments; calls with arguments over 100 KB are refused.
+  - Tool schemas over 8 KB or nested more than 10 levels are dropped, and long descriptions inside them are truncated.
+  - Error text is redacted.
+- **Inline edit:**
+  - The proposal is shown as an interleaved diff in the inline widget, with a **View diff** link to a side-by-side diff. The file itself is not touched until Accept, so autosave, formatters and watchers never see unaccepted text.
+  - Accept is one undoable edit.
+  - The region follows your edits elsewhere in the file. Editing inside it cancels the session and leaves your text as it is.
+  - Stale streams and refinements can't interleave.
+  - `<REGION>` markers in your code are escaped.
+- **Terminal helper:**
+  - Output capture is amortised O(1), stops at 20 MB or when the setting is turned off.
+  - Fences of four or more backticks are neutralised.
+  - Output is withheld for credential commands (`env`, `printenv`, `gh auth`, `aws configure`, `kubectl config view`, `docker login`, `echo $…TOKEN`, …).
+  - Exit codes 129/137/143 (signals) are ignored like 130.
+- **Git help:** repo-local `filter.*` and `diff.*` driver commands (clean/smudge/process/textconv/command) are blanked for every diff, and `--stat` uses the same safe flags.
+- **Run task:**
+  - Undo all covers only the task's own writes, not your clicks during it.
+  - The card says when xAI reports no cost ("token budget only") or a partial one ("≥ $x").
+  - Agent mode is restored after the task.
+- **History:**
+  - Only the visible transcript is saved by default. Attached files, tool outputs, diffs and terminal output are no longer written to disk; turn on the new `vsgrok.history.saveContext` for full resume.
+  - Attached context chips stay with their tab.
+  - The last save is awaited on shutdown.
+
+**UI / accessibility**
+- **Tabs:** focus stays in the strip after switch/close/new, there's a `tabpanel` link and full titles for screen readers, Home/End work, Delete does nothing on the only tab, and the active tab scrolls into view.
+- **Task:**
+  - The progress line is no longer a live region; steps are announced at most every 10 s.
+  - The Send button reads "Start task" in task mode.
+  - Focus is kept on Stop and at the end.
+  - A stopped task has a dashed border, and "asked" log lines use a warning border instead of low-contrast text.
+  - Cards raised during a task are indented and say "Part of task: …".
+  - **Undo all** asks for a second click.
+  - A header **▶ Task · n/N** pill jumps to the card.
+- **MCP card:**
+  - "Always allow *tool* from *server* (until its config changes)" is its own row before **Run**, and Run becomes **Run & always allow** when it's ticked.
+  - The arguments block is focusable.
+  - The ⚙ panel has an **MCP servers…** link.
+- **Git and terminal:**
+  - The review and "Ask Grok" bubbles have an expandable chip showing what was sent ("diff: 3 files · +120 −40", "terminal output · 40 lines").
+  - Links in answers show their path on hover.
+  - Git errors also appear as a chat toast, and status messages last 10 s.
+  - The terminal item reads "Ask Grok (exit N)" and hides after a later success in any terminal.
+- **Inline edit:**
+  - The key hints follow the platform (Cmd/Ctrl) and say Tab works in the editor.
+  - Refusals (secret files, oversize selections) appear in the inline widget instead of only the status bar.
+  - The region has a non-colour ✎ marker for high-contrast themes.
+- **History:** "Press again to delete …" is announced. Reopened chats say that tool steps aren't shown.
+- **Galactic theme** styles for the tab strip, history panel and task card.
+
 ## 0.14.0 — 2026-10-12
 **Terminal helper**
 - When a terminal command exits non-zero (via VS Code shell integration), a subtle **✨ Ask Grok** item appears at the left of the status bar. There is no notification or popup. Its tooltip names the command and exit code. Exit 130 (Ctrl+C) is ignored.
