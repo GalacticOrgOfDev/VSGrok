@@ -12,7 +12,7 @@ import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
 import { checkReadable } from './security';
 import { problemsContext } from './agent/checks';
-import { filterImages, visionBlocked, IMAGE_FILE_RE, API_MAX_IMAGE_BYTES } from './imagesCore';
+import { filterImages, visionBlocked, IMAGE_FILE_RE, MAX_IMAGE_FILE_BYTES, sniffImage, stripOldImages, dropUnresolvableReasoning } from './imagesCore';
 import { MeterState, emptyMeter, addTurn, meterView } from './costMeter';
 import { onPlanApplied, onPlanUndoExpired, undoPlan } from './planApply';
 import { isSecretPath } from './index/lexical';
@@ -332,17 +332,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (workspaceOnly) {
       const chk = await checkReadable(u);
       if (!chk.ok) { this.post({ type: 'contextRefused', path: chk.rel, reason: chk.reason }); return; }
-    } else if (u.scheme !== 'file' || isSecretPath(u.path)) {
-      this.post({ type: 'contextRefused', path: u.path.split('/').pop(), reason: 'looks like a secrets/credentials file' }); return;
+    } else {
+      // Picked in the open dialog: any file: path, but never a secret-looking one (symlinks resolved first; L4).
+      let real = u.path;
+      try { const [fs, path] = await Promise.all([import('fs'), import('path')]); real = (await fs.promises.realpath(u.fsPath)).split(path.sep).join('/'); } catch { /* keep path */ }
+      if (u.scheme !== 'file' || isSecretPath(u.path) || isSecretPath(real)) {
+        this.post({ type: 'contextRefused', path: u.path.split('/').pop(), reason: 'looks like a secrets/credentials file' }); return;
+      }
     }
+    const name = u.path.split('/').pop();
     try {
       const st = await vscode.workspace.fs.stat(u);
-      if (st.size > API_MAX_IMAGE_BYTES * 2) { this.post({ type: 'imagesRefused', reasons: [`${u.path.split('/').pop()}: file too large`] }); return; }
+      if (st.size > MAX_IMAGE_FILE_BYTES) { this.post({ type: 'imagesRefused', reasons: [`${name}: larger than ${MAX_IMAGE_FILE_BYTES / 1048576} MiB`] }); return; }
       const b = await vscode.workspace.fs.readFile(u);
-      const ext = (u.path.match(/\.(\w+)$/)?.[1] ?? 'png').toLowerCase();
-      const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-      this.post({ type: 'imageFile', name: u.path.split('/').pop(), dataUrl: `data:${mime};base64,${Buffer.from(b).toString('base64')}` });
-    } catch (e) { this.post({ type: 'imagesRefused', reasons: [`${u.path.split('/').pop()}: ${(e as Error).message}`] }); }
+      const mime = sniffImage(b); // M3: real type from magic bytes, not the extension
+      if (!mime) { this.post({ type: 'imagesRefused', reasons: [`${name}: not a PNG, JPEG, GIF, WebP or BMP image`] }); return; }
+      this.post({ type: 'imageFile', name, dataUrl: `data:${mime};base64,${Buffer.from(b).toString('base64')}` });
+    } catch (e) { this.post({ type: 'imagesRefused', reasons: [`${name}: ${(e as Error).message}`] }); }
   }
 
   private async pickImages() {
@@ -519,7 +525,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const agent = this.agentMode;
     const mode = agent ? 'agent' : 'ask';
     const c = cfg();
-    if (images?.length) { this.noStore = true; }
+    if (images?.length && !this.noStore) {
+      this.noStore = true;
+      // M1: reasoning from store=true turns has no encrypted_content and can't be resent statelessly.
+      this.conv = { items: dropUnresolvableReasoning(this.conv.items).items };
+    }
+    // H1: don't keep resending old images. Keep the most recent image turn for follow-ups; drop all older ones
+    // (and all previous ones when this turn brings new images).
+    if (this.noStore) { this.conv = { items: stripOldImages(this.conv.items, images?.length ? 0 : 1).items }; }
     const store = (c.get<boolean>('responses.store') ?? true) && !this.noStore;
     const maxSteps = clampNum(c.get('agent.maxSteps'), 1, 50, 15);
     const cts = this.cts!;
@@ -531,7 +544,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (compactAt && this.lastInputTokens >= compactAt && this.conv.items.length > 2) {
       this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'running', label: 'Compacting long conversation…' });
       try {
-        const r = await compactInput({ ...base, model: base.model }, this.conv.items);
+        const r = await compactInput({ ...base, model: base.model }, stripOldImages(this.conv.items, 0).items); // M2: no image payloads to compaction
         this.conv = { items: r.output };
         this.lastInputTokens = 0;
         this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'done', label: `Compacted conversation${r.dropped ? ` (${r.dropped} messages folded)` : ''}` });
@@ -638,7 +651,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const maxSteps = clampNum(cfg().get('agent.maxSteps'), 1, 50, 15);
       const cts = this.cts!;
       const signal = this.abort!.signal;
-      let tid = 0; let cached = 0; let reasoningTok = 0; let thinking = '';
+      let tid = 0; let cached = 0; let reasoningTok = 0; let thinking = ''; let promptTok = 0; let promptKnown = false; let costTicks = 0; let costSteps = 0; let steps = 0;
       const ids = new Map<string, string>();
       const r = await runToolLoop({
         system: sys,
@@ -658,6 +671,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         })).then(res => {
           cached += res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
           reasoningTok += res.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+          steps++;
+          if (typeof res.usage?.prompt_tokens === 'number') { promptTok += res.usage.prompt_tokens; promptKnown = true; }
+          if (typeof res.usage?.cost_in_usd_ticks === 'number') { costTicks += res.usage.cost_in_usd_ticks; costSteps++; }
           if (thinking) { this.post({ type: 'toolEvent', id: aid, toolId: 'think', state: 'done', label: 'Thought', detail: thinking.length > 8000 ? '…' + thinking.slice(-8000) : thinking }); }
           return res;
         }),
@@ -679,7 +695,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
       this.offerChecks();
-      this.meter = addTurn(this.meter, { input: 0, output: r.completionTokens, reasoning: reasoningTok, cached }); this.pushMeter();
+      this.meter = addTurn(this.meter, { input: promptTok, inputUnknown: !promptKnown, output: r.completionTokens, reasoning: reasoningTok, cached,
+        costUsd: costSteps ? costTicks / 1e10 : undefined, costMissing: steps - costSteps }); this.pushMeter();
       this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, cachedTokens: cached || undefined, reasoningTokens: reasoningTok || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;

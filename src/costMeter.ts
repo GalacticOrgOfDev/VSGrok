@@ -1,14 +1,14 @@
 // Per-chat running usage. Costs come only from the API's usage.cost_in_usd_ticks (1 tick = 1e-10 USD); nothing is estimated.
-export interface TurnUsage { input: number; output: number; reasoning: number; cached: number; costUsd?: number; costMissing?: number }
-export interface MeterState { turns: number; input: number; output: number; reasoning: number; cached: number; costUsd: number; costTurns: number; missing: number }
+export interface TurnUsage { input: number; inputUnknown?: boolean; output: number; reasoning: number; cached: number; costUsd?: number; costMissing?: number }
+export interface MeterState { turns: number; input: number; output: number; reasoning: number; cached: number; costUsd: number; costTurns: number; missing: number; inputUnknown: number }
 
-export const emptyMeter = (): MeterState => ({ turns: 0, input: 0, output: 0, reasoning: 0, cached: 0, costUsd: 0, costTurns: 0, missing: 0 });
+export const emptyMeter = (): MeterState => ({ turns: 0, input: 0, output: 0, reasoning: 0, cached: 0, costUsd: 0, costTurns: 0, missing: 0, inputUnknown: 0 });
 
 export function addTurn(m: MeterState, u: TurnUsage): MeterState {
   const has = typeof u.costUsd === 'number' && Number.isFinite(u.costUsd);
   return {
     turns: m.turns + 1, input: m.input + (u.input | 0), output: m.output + (u.output | 0), reasoning: m.reasoning + (u.reasoning | 0), cached: m.cached + (u.cached | 0),
-    costUsd: m.costUsd + (has ? u.costUsd! : 0), costTurns: m.costTurns + (has ? 1 : 0), missing: m.missing + (!has || (u.costMissing ?? 0) > 0 ? 1 : 0),
+    costUsd: m.costUsd + (has ? u.costUsd! : 0), costTurns: m.costTurns + (has ? 1 : 0), missing: m.missing + (!has || (u.costMissing ?? 0) > 0 ? 1 : 0), inputUnknown: m.inputUnknown + (u.inputUnknown ? 1 : 0),
   };
 }
 
@@ -24,7 +24,7 @@ export function meterView(m: MeterState): { hidden: boolean; text: string; ariaL
   const cost = m.costTurns ? fmtUsd(m.costUsd) + (m.missing ? '+' : '') : '';
   const lines = [
     `This chat: ${m.turns} turn${m.turns === 1 ? '' : 's'}`,
-    `Input: ${m.input.toLocaleString('en-US')} tokens (${m.cached.toLocaleString('en-US')} cached)`,
+    m.inputUnknown >= m.turns ? 'Input: not reported (Chat Completions)' : `Input: ${m.input.toLocaleString('en-US')} tokens (${m.cached.toLocaleString('en-US')} cached)${m.inputUnknown ? ` — not reported for ${m.inputUnknown} turn${m.inputUnknown === 1 ? '' : 's'}` : ''}`,
     `Output: ${m.output.toLocaleString('en-US')} tokens (${m.reasoning.toLocaleString('en-US')} reasoning)`,
     m.costTurns ? `Cost reported by xAI: ${fmtUsd(m.costUsd)}` : 'Cost: not reported by the API for this chat (tokens only)',
     ...(m.costTurns && m.missing ? [`+ = some turns didn't report a cost (${m.missing} of ${m.turns}); they aren't included`] : []),

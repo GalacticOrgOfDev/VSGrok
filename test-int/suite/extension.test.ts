@@ -493,4 +493,46 @@ suite('VSGrok in VS Code', () => {
       await c.update('model', undefined, vscode.ConfigurationTarget.Global);
     }
   });
+
+  test('0.8.1 (JGrok): stored reasoning dropped on switch to stateless, old images stripped, Explorer image MIME sniffed', async () => {
+    const xai = process.env.VSGROK_TEST_XAI!;
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('baseUrl', xai + '/v1', vscode.ConfigurationTarget.Global);
+    await c.update('model', 'mock-vision', vscode.ConfigurationTarget.Global);
+    await api.chat['ctx'].secrets.store('vsgrok.apiKey', 'test-key');
+    type Req = { store?: boolean; input: { type?: string; role?: string; content?: { type: string; text?: string }[] }[] };
+    const reqs = async () => await (await fetch(xai + '/requests')).json() as Req[];
+    try {
+      await api.chat.testReceive({ type: 'clearChat' }); await idle();
+      const start = (await reqs()).length;
+      await api.chat.testReceive({ type: 'query', text: 'hello' }); await idle();          // stored turn → reasoning item
+      const e0 = posts('streamError').length;
+      await api.chat.testReceive({ type: 'query', text: 'look', images: [PNG] }); await idle(); // switch to stateless
+      await api.chat.testReceive({ type: 'query', text: 'and this', images: [PNG] }); await idle();
+      assert.strictEqual(posts('streamError').length, e0, 'no API error after the switch (M1)');
+      const r = (await reqs()).slice(start);
+      assert.strictEqual(r.length, 3);
+      assert.ok(!r[1].input.some(i => i.type === 'reasoning'), 'reasoning without encrypted_content dropped');
+      const users = r[2].input.filter(i => i.role === 'user' && Array.isArray(i.content));
+      const imgs = JSON.stringify(r[2].input).match(/input_image/g) ?? [];
+      assert.strictEqual(imgs.length, 1, 'only the newest image is resent (H1)');
+      assert.match(JSON.stringify(users), /image 1 from an earlier message omitted/);
+      // M3: a GIF named .png is labelled by its magic bytes; non-images refused early.
+      const root = vscode.workspace.workspaceFolders![0].uri;
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'fake.png'), Buffer.from('GIF89a\x01\x00\x01\x00\x00\x00\x00;', 'latin1'));
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'text.png'), Buffer.from('not an image at all'));
+      const i0 = posts('imageFile').length; const x0 = posts('imagesRefused').length;
+      await api.chat.testReceive({ type: 'dropFiles', uris: [vscode.Uri.joinPath(root, 'fake.png').toString(), vscode.Uri.joinPath(root, 'text.png').toString()] });
+      const img = await until(() => posts('imageFile')[i0]);
+      assert.match(img.dataUrl, /^data:image\/gif;base64,/);
+      const ref = await until(() => posts('imagesRefused')[x0]);
+      assert.match(ref.reasons[0], /text\.png: not a PNG, JPEG, GIF, WebP or BMP image/);
+    } finally {
+      await api.chat.testReceive({ type: 'clearChat' });
+      await api.chat['ctx'].secrets.delete('vsgrok.apiKey');
+      await c.update('baseUrl', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('model', undefined, vscode.ConfigurationTarget.Global);
+    }
+  });
 });

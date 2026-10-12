@@ -1,6 +1,6 @@
 // Live model discovery via GET {baseUrl}/models (https://docs.x.ai/developers/rest-api-reference/inference/models.md).
 /** vision: true/false from GET /v1/language-models input_modalities; undefined when unknown. */
-export interface ModelInfo { id: string; contextLength?: number; reasoning?: boolean; vision?: boolean }
+export interface ModelInfo { id: string; contextLength?: number; reasoning?: boolean; vision?: boolean; aliases?: string[] }
 
 /** Used when there is no key, the request fails, or it returns nothing usable. Ids from https://docs.x.ai/developers/models.md (Oct 2026). */
 export const FALLBACK_MODELS: ModelInfo[] = [
@@ -31,8 +31,9 @@ export function parseModels(json: unknown): ModelInfo[] {
 }
 
 /** Parse GET /v1/language-models: id (+aliases) → supports image input. Exported for tests. */
-export function parseVision(json: unknown): Map<string, boolean> {
-  const out = new Map<string, boolean>();
+export function parseVision(json: unknown): Map<string, boolean> & { aliasesOf?: Map<string, string[]> } {
+  const out: Map<string, boolean> & { aliasesOf?: Map<string, string[]> } = new Map<string, boolean>();
+  out.aliasesOf = new Map();
   const list = (json as { models?: unknown })?.models;
   if (!Array.isArray(list)) { return out; }
   for (const m of list) {
@@ -40,12 +41,20 @@ export function parseVision(json: unknown): Map<string, boolean> {
     if (typeof r.id !== 'string' || !Array.isArray(r.input_modalities)) { continue; }
     const v = r.input_modalities.includes('image');
     out.set(r.id, v);
-    if (Array.isArray(r.aliases)) { for (const a of r.aliases) { if (typeof a === 'string') { out.set(a, v); } } }
+    if (Array.isArray(r.aliases)) {
+      const al = r.aliases.filter((a): a is string => typeof a === 'string' && /^[\w.:-]{1,80}$/.test(a));
+      for (const a of al) { out.set(a, v); }
+      if (al.length) { out.aliasesOf!.set(r.id, al); }
+    }
   }
   return out;
 }
-export function withVision(models: ModelInfo[], vision: Map<string, boolean>): ModelInfo[] {
-  return models.map(m => vision.has(m.id) ? { ...m, vision: vision.get(m.id) } : m);
+export function withVision(models: ModelInfo[], vision: Map<string, boolean> & { aliasesOf?: Map<string, string[]> }): ModelInfo[] {
+  return models.map(m => {
+    if (!vision.has(m.id)) { return m; }
+    const aliases = vision.aliasesOf?.get(m.id);
+    return { ...m, vision: vision.get(m.id), ...(aliases ? { aliases } : {}) };
+  });
 }
 
 export async function fetchModels(baseUrl: string, apiKey: string, timeoutMs = 8000): Promise<ModelInfo[]> {
@@ -56,10 +65,12 @@ export async function fetchModels(baseUrl: string, apiKey: string, timeoutMs = 8
     if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
     const models = parseModels(await res.json());
     // Image support comes from /language-models (input_modalities). Best effort: unknown if it fails.
+    // L3: its own timeout, so a slow /models doesn't abort it.
+    const ctl2 = new AbortController(); const t2 = setTimeout(() => ctl2.abort(), timeoutMs);
     try {
-      const lm = await fetch(baseUrl.replace(/\/+$/, '') + '/language-models', { headers: { Authorization: `Bearer ${apiKey}` }, signal: ctl.signal });
+      const lm = await fetch(baseUrl.replace(/\/+$/, '') + '/language-models', { headers: { Authorization: `Bearer ${apiKey}` }, signal: ctl2.signal });
       if (lm.ok) { return withVision(models, parseVision(await lm.json())); }
-    } catch { /* keep unknown */ }
+    } catch { /* keep unknown */ } finally { clearTimeout(t2); }
     return models;
   } finally { clearTimeout(t); }
 }

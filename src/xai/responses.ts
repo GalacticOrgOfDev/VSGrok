@@ -166,6 +166,7 @@ export async function streamResponse(r: ResponsesRequest): Promise<ResponsesResu
 
 /** POST /v1/responses/compact: returns the compacted output (a single compaction item) to use as the head of the next input. */
 export async function compactInput(t: TransportOptions & { model: string }, input: InputItem[]): Promise<{ output: InputItem[]; dropped?: number }> {
+  // The endpoint has no `store` parameter (docs: advanced-api-usage/context-compaction); it returns an opaque blob.
   const res: any = await postXai('/responses/compact', { model: t.model, input }, t);
   if (!Array.isArray(res?.output) || !res.output.length) { throw new GrokApiError('Compaction returned no output.', 'generic'); }
   return { output: res.output, dropped: res.usage?.dropped_message_count };

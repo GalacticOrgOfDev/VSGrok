@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
-import { checkImageDataUrl, filterImages, visionBlocked, MAX_IMAGES, decodedBytes } from '../imagesCore';
+import { checkImageDataUrl, filterImages, visionBlocked, MAX_IMAGES, decodedBytes, stripOldImages, dropUnresolvableReasoning, sniffImage } from '../imagesCore';
 import { emptyMeter, addTurn, meterView, fmtTokens } from '../costMeter';
 import { parseVision, withVision } from '../xai/models';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -19,9 +19,11 @@ test('images: only PNG/JPEG data URLs with matching magic bytes pass', () => {
   assert.equal(decodedBytes('AAAA'), 3); assert.equal(decodedBytes('AA=='), 1);
 });
 
-test('images: size cap at 20 MiB and count cap', () => {
+test('images: 4 MiB per-image cap (extension-side) and count cap', () => {
   const huge = 'data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(28 * 1024 * 1024);
-  assert.match((checkImageDataUrl(huge) as { reason: string }).reason, /20 MiB/);
+  assert.match((checkImageDataUrl(huge) as { reason: string }).reason, /4 MiB/);
+  const big = 'data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(Math.ceil(4.5 * 1024 * 1024 / 3) * 4 - 11);
+  assert.match((checkImageDataUrl(big) as { reason: string }).reason, /4 MiB/);
   const r = filterImages(Array(MAX_IMAGES + 2).fill(PNG).concat(['nope']));
   assert.equal(r.images.length, MAX_IMAGES); assert.equal(r.dropped.length, 3);
   assert.deepEqual(filterImages(['bad', PNG, 'x', PNG]).kept, [1, 3]);
@@ -38,7 +40,10 @@ test('vision gate: block only models known not to accept images; suggest a visio
 test('models: /language-models input_modalities (incl. aliases) → vision flag', () => {
   const v = parseVision({ models: [{ id: 'grok-4.7', aliases: ['grok-latest'], input_modalities: ['text', 'image'] }, { id: 'grok-code', input_modalities: ['text'] }, { id: 7 }] });
   assert.equal(v.get('grok-4.7'), true); assert.equal(v.get('grok-latest'), true); assert.equal(v.get('grok-code'), false);
-  assert.deepEqual(withVision([{ id: 'grok-4.7' }, { id: 'x' }], v), [{ id: 'grok-4.7', vision: true }, { id: 'x' }]);
+  assert.deepEqual(withVision([{ id: 'grok-4.7' }, { id: 'x' }], v), [{ id: 'grok-4.7', vision: true, aliases: ['grok-latest'] }, { id: 'x' }]);
+  // L3: alias lookup in the gate
+  const code = withVision([{ id: 'grok-code' }], parseVision({ models: [{ id: 'grok-code', aliases: ['grok-code-latest'], input_modalities: ['text'] }] }));
+  assert.equal(visionBlocked('grok-code-latest', code).blocked, true);
   assert.equal(parseVision({}).size, 0);
 });
 
@@ -70,4 +75,45 @@ test('cards: image helpers', () => {
   assert.equal(cards.imagesOnlyPrompt(1), 'What is in this image?'); assert.equal(cards.imagesOnlyPrompt(3), 'What is in these images?');
   assert.equal(cards.toastMs('x'.repeat(80)), 8000);
   assert.equal(cards.visionNote('m', '').action, '');
+});
+
+test('H1: per-message image budget (16 MiB) and L1: count checked before scanning', () => {
+  const b64 = (n: number) => 'data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(Math.floor(n * 4 / 3 / 4) * 4 - 11);
+  const r = filterImages([b64(3.9e6), b64(3.9e6), b64(3.9e6), b64(3.9e6), b64(3.9e6)]);
+  assert.equal(r.images.length, 4); assert.match(r.dropped[0], /16 MiB of images in one message/);
+  const many = filterImages(Array(50).fill(PNG));
+  assert.equal(many.images.length, MAX_IMAGES); assert.match(many.dropped.at(-1)!, /34 more images ignored/);
+  assert.equal(checkImageDataUrl('data:image/png;base64,iVBO RwAA').ok, false);
+  assert.equal(checkImageDataUrl('data:image/png;base64,iVBORw0KGgo=A==').ok, false);
+});
+
+test('H1/M2: stripOldImages keeps the last image turn, replaces older parts with placeholders', () => {
+  const img = (t: string) => ({ role: 'user', content: [{ type: 'input_text', text: t }, { type: 'input_image', image_url: PNG }] });
+  const items = [img('one'), { role: 'assistant', content: 'ok' }, img('two'), { role: 'user', content: 'three' }];
+  const r = stripOldImages(items, 1);
+  assert.equal(r.stripped, 1);
+  assert.deepEqual(r.items[0].content[1], { type: 'input_text', text: '[image 1 from an earlier message omitted]' });
+  assert.equal(r.items[2].content[1].type, 'input_image');
+  assert.equal((items[0].content[1] as { type: string }).type, 'input_image', 'input not mutated');
+  assert.equal(stripOldImages(items, 0).stripped, 2);
+});
+
+test('M1: dropUnresolvableReasoning drops reasoning without encrypted_content', () => {
+  const r = dropUnresolvableReasoning([{ type: 'reasoning', id: 'r1' }, { type: 'reasoning', encrypted_content: 'x' }, { role: 'user', content: 'hi' }]);
+  assert.equal(r.dropped, 1); assert.equal(r.items.length, 2);
+});
+
+test('M3: sniffImage uses magic bytes', () => {
+  assert.equal(sniffImage(Buffer.from('GIF89a......')), 'image/gif');
+  assert.equal(sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'image/png');
+  assert.equal(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), 'image/jpeg');
+  assert.equal(sniffImage(Buffer.from('RIFF....WEBPVP8 ')), 'image/webp');
+  assert.equal(sniffImage(Buffer.from('hello world')), undefined);
+});
+
+test('M4: Chat Completions turn without prompt_tokens says "not reported", not 0', () => {
+  let m = addTurn(emptyMeter(), { input: 0, inputUnknown: true, output: 50, reasoning: 0, cached: 0 });
+  assert.match(meterView(m).tooltip, /Input: not reported \(Chat Completions\)/);
+  m = addTurn(m, { input: 900, output: 10, reasoning: 0, cached: 0, costUsd: 0.001 });
+  assert.match(meterView(m).tooltip, /Input: 900 tokens .*not reported for 1 turn/);
 });

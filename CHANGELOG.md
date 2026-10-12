@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-10-12
+**Code and security review (JGrok)**
+- **Image budget (high).** Old images are no longer resent on every turn. Only the most recent image message is kept for follow-ups; older image parts become a short "[image N from an earlier message omitted]" placeholder (and all earlier ones are dropped when a new image is attached). The extension now enforces 4 MiB per image and 16 MiB of images per message, not just the webview.
+- Switching a chat to stateless (`store: false`) on the first image drops stored reasoning items that have no `encrypted_content`, so the resend isn't rejected.
+- Compaction no longer uploads image payloads. (The compaction endpoint has no `store` parameter; it returns an opaque blob.)
+- Dropped/picked image files: read cap lowered to 20 MiB, MIME type taken from the magic bytes rather than the file extension, and non-images refused before reading into the webview.
+- Cost meter on the Chat Completions path records the reported prompt tokens and cost; when input isn't reported it says "Input: not reported (Chat Completions)" instead of 0.
+- Low: the image count is checked before any data URL is scanned (and at most 16 entries are looked at); base64 is validated by a scan instead of a large regex capture; `/language-models` has its own timeout; the vision gate also resolves model aliases; open-dialog picks resolve symlinks before the secret-file check.
+
 **Image input and cost meter UI review (UIGrok)**
 - The vision note no longer loses your message. The typed text is restored, the primary button is **Switch to <model> and resend** (switches, then replays the same text and images), and the secondary is **Send without images**. The note has its own neutral style and focuses the primary button.
 - Attached images sit in their own **image tray** above the input (a list, kept out of the context-chip collapse):

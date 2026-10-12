@@ -27,13 +27,18 @@ async function main() {
     if (url === '/language-models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ models: [{ id: 'mock-vision', input_modalities: ['text', 'image'] }, { id: 'mock-text', input_modalities: ['text'] }] })); return; }
     if (url === '/responses' && req.method === 'POST') {
       let body = ''; req.on('data', d => (body += d)); req.on('end', () => {
-        try { xaiRequests.push(JSON.parse(body)); } catch { xaiRequests.push(body); }
+        let parsed: { store?: boolean; input?: { type?: string; encrypted_content?: string }[] } = {};
+        try { parsed = JSON.parse(body); xaiRequests.push(parsed); } catch { xaiRequests.push(body); }
         const n = xaiRequests.length;
+        // Like xAI (JGrok M1): stateless requests can't carry reasoning items that lack encrypted_content.
+        if (parsed.store === false && Array.isArray(parsed.input) && parsed.input.some(i => i?.type === 'reasoning' && !i.encrypted_content)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'reasoning item without encrypted_content cannot be resolved' } })); return;
+        }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const msg = { type: 'message', id: `msg_${n}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'A red square.', annotations: [] }] };
         const ev = [
           { type: 'response.output_text.delta', item_id: msg.id, output_index: 0, content_index: 0, delta: 'A red square.' },
-          { type: 'response.completed', response: { id: `resp_${n}`, status: 'completed', output: [msg], usage: { input_tokens: 1000 * n, output_tokens: 50, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 10 }, cost_in_usd_ticks: 123_000_000 } } },
+          { type: 'response.completed', response: { id: `resp_${n}`, status: 'completed', output: parsed.store === false ? [msg] : [{ type: 'reasoning', id: `rs_${n}`, summary: [] }, msg], usage: { input_tokens: 1000 * n, output_tokens: 50, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 10 }, cost_in_usd_ticks: 123_000_000 } } },
         ];
         for (const e of ev) { res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`); }
         res.end();

@@ -13,7 +13,7 @@ export interface StreamDelta {
   reasoning?: string;
   toolCalls?: { index: number; id?: string; name?: string; arguments?: string }[];
   finishReason?: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; completion_tokens_details?: { reasoning_tokens?: number } };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost_in_usd_ticks?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; completion_tokens_details?: { reasoning_tokens?: number } };
 }
 
 /** Incremental SSE line parser. UTF-8 safe across chunk boundaries. */
