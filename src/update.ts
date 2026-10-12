@@ -2,8 +2,13 @@
 import * as vscode from 'vscode';
 import { RELEASES_LATEST_URL, ReleaseInfo, isNewer, parseRelease, shouldCheck } from './updateCheck';
 import { cfg } from './config';
+import { diag } from './diagnostics';
 
 const LAST_CHECK = 'vsgrok.update.lastCheck';
+/** Integration tests point the updater at a local mock (only when VSGROK_TEST=1). */
+const TEST = process.env.VSGROK_TEST === '1' && process.env.VSGROK_TEST_RELEASES_URL;
+const latestUrl = () => (TEST ? process.env.VSGROK_TEST_RELEASES_URL! : RELEASES_LATEST_URL);
+const assetPrefix = () => (TEST ? new URL(process.env.VSGROK_TEST_RELEASES_URL!).origin + '/' : undefined);
 
 export interface UpdateUi {
   showUpdateCard(card: { state: 'available' | 'downloading' | 'installed' | 'error' | 'uptodate'; current: string; latest?: string; url?: string; notes?: string; msg?: string }): Promise<void>;
@@ -31,13 +36,14 @@ export class Updater {
   async check(manual = true) {
     let info: ReleaseInfo | undefined;
     try {
-      const r = await fetch(RELEASES_LATEST_URL, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'VSGrok' }, signal: AbortSignal.timeout(15000) });
+      const r = await fetch(latestUrl(), { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'VSGrok' }, signal: AbortSignal.timeout(15000) });
       if (!r.ok) { throw new Error(`GitHub returned ${r.status}`); }
-      info = parseRelease(await r.json());
+      info = parseRelease(await r.json(), assetPrefix());
     } catch (e) {
       if (manual) { await this.ui.showUpdateCard({ state: 'error', current: this.current, msg: `Update check failed: ${(e as Error).message}` }); }
       return;
     }
+    diag('update.check', { manual, latest: info?.version, current: this.current });
     if (manual) { await this.ctx.globalState.update(LAST_CHECK, Date.now()); }
     if (info && isNewer(info.version, this.current)) {
       this.latest = info;

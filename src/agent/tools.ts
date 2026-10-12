@@ -4,6 +4,9 @@ import { ToolSpec } from '../xai/client';
 import { FunctionTool } from '../xai/responses';
 import { proposeEdit } from '../proposals';
 import { requestApproval } from './approvals';
+import { isSecretPath } from '../index/lexical';
+import { diag } from '../diagnostics';
+import { workspaceIndex } from '../index/workspaceIndex';
 
 function toSignal(token: vscode.CancellationToken): AbortSignal {
   const ac = new AbortController();
@@ -16,6 +19,7 @@ const MAX_READ = 1_000_000;
 
 /** Read-only tools: always offered in chat. */
 export const READ_TOOL_SPECS: ToolSpec[] = [
+  { type: 'function', function: { name: 'find_relevant_files', description: 'Find the files most relevant to a task or question using the local workspace index (BM25 over file paths, symbol names and contents). Returns ranked paths with matching lines and symbol outlines. Use this first for "where is X handled", "how does Y work" or before editing an unfamiliar area, then read_file the top hits.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Natural-language or identifier query' }, max: { type: 'number', description: 'Max files (default 10, max 30)' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'get_workspace_overview', description: 'Overview of the open VS Code workspace: folder name(s), top-level tree, package.json / README summary, open editors, active file, git branch and status. Call this first when asked about "the workspace" or "this project".', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'read_file', description: 'Read a UTF-8 text file in the workspace.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative path' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'List workspace files matching a glob (default **/*). Excludes node_modules.', parameters: { type: 'object', properties: { glob: { type: 'string' }, max: { type: 'number' } } } } },
@@ -128,10 +132,20 @@ async function workspaceOverview(token: vscode.CancellationToken): Promise<strin
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function executeTool(name: string, args: any, token: vscode.CancellationToken): Promise<string> {
+  const t0 = Date.now();
+  try { return await executeToolInner(name, args, token); } finally { diag('tool', { name, ms: Date.now() - t0 }); }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function executeToolInner(name: string, args: any, token: vscode.CancellationToken): Promise<string> {
   try {
     switch (name) {
       case 'get_workspace_overview': return await workspaceOverview(token);
-      case 'read_file': return await readText(resolveInWorkspace(String(args.path)));
+      case 'find_relevant_files': return await workspaceIndex.findRelevant(String(args.query ?? ''), Number(args.max) || 10, token);
+      case 'read_file': {
+        if (isSecretPath(String(args.path))) { return `Refused: ${args.path} looks like a secrets/credentials file (.env, keys, tokens). VSGrok never reads these.`; }
+        return await readText(resolveInWorkspace(String(args.path)));
+      }
       case 'list_files': {
         const files = await vscode.workspace.findFiles(args.glob || '**/*', EXCLUDE, Math.min(Number(args.max) || 300, 2000), token);
         return files.map(f => vscode.workspace.asRelativePath(f)).sort().join('\n') || '(no files)';
@@ -143,6 +157,7 @@ export async function executeTool(name: string, args: any, token: vscode.Cancell
         const hits: string[] = [];
         for (const f of files) {
           if (token.isCancellationRequested || hits.length >= 200) { break; }
+          if (isSecretPath(vscode.workspace.asRelativePath(f, false))) { continue; }
           let text: string;
           try { const b = await vscode.workspace.fs.readFile(f); if (b.length > 1_000_000 || b.includes(0)) { continue; } text = Buffer.from(b).toString('utf8'); } catch { continue; }
           text.split('\n').forEach((line, i) => {

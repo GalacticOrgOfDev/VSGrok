@@ -13,3 +13,6 @@ pnpm-lock.yaml
 UX/**
 .github/**
 docs/**
+out-int/**
+test-int/**
+.vscode-test/**

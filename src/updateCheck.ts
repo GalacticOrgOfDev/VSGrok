@@ -40,11 +40,11 @@ export interface ReleaseInfo { version: string; tag: string; url: string; notes:
 
 /** Extract what we need from a GitHub "latest release" response; undefined if no .vsix asset or draft/prerelease. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function parseRelease(j: any): ReleaseInfo | undefined {
+export function parseRelease(j: any, assetPrefix = 'https://github.com/GalacticOrgOfDev/VSGrok/releases/download/'): ReleaseInfo | undefined {
   if (!j || j.draft || j.prerelease || typeof j.tag_name !== 'string') { return undefined; }
   const assets: { name?: string; browser_download_url?: string }[] = Array.isArray(j.assets) ? j.assets : [];
   const a = assets.find(x => typeof x.name === 'string' && x.name.toLowerCase().endsWith('.vsix') && typeof x.browser_download_url === 'string'
-    && /^https:\/\/github\.com\/GalacticOrgOfDev\/VSGrok\/releases\/download\//i.test(x.browser_download_url));
+    && x.browser_download_url.toLowerCase().startsWith(assetPrefix.toLowerCase()));
   if (!a) { return undefined; }
   return { version: j.tag_name.replace(/^v/, ''), tag: j.tag_name, url: String(j.html_url ?? ''), notes: String(j.body ?? '').slice(0, 2000), assetUrl: a.browser_download_url!, assetName: a.name! };
 }

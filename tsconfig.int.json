@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "outDir": "out-int", "rootDir": ".", "noEmit": false, "sourceMap": false, "types": ["node", "mocha"], "esModuleInterop": true }, "include": ["test-int/**/*.ts"], "exclude": ["test-int/fixture/**"] }

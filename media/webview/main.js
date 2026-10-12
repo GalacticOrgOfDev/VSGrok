@@ -151,10 +151,7 @@
     const foot = document.createElement('div'); foot.className = 'msg-footer';
     if (st === 'stopped') { const s = document.createElement('span'); s.className = 'stopped-tag'; s.textContent = 'Stopped'; foot.appendChild(s); }
     if (st === 'error') {
-      const e = document.createElement('div'); e.className = 'error-msg'; e.textContent = extra.msg;
-      t.el.appendChild(e);
-      if (extra.kind === 'missing_key' || extra.kind === 'auth') { foot.appendChild(btn('Set API Key', () => vscode.postMessage({ type: 'setApiKey' }))); }
-      foot.appendChild(btn('Retry', () => vscode.postMessage({ type: 'regenerate' })));
+      t.el.appendChild(errorCard(extra, true));
     } else {
       foot.appendChild(btn('Copy message', (b) => { navigator.clipboard.writeText(t.raw); vscode.postMessage({ type: 'copyMessage' }); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy message'), 1500); }));
       const rg = btn('Regenerate', () => vscode.postMessage({ type: 'regenerate' })); rg.classList.add('regen-btn'); foot.appendChild(rg);
@@ -221,6 +218,7 @@
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.streaming && document.activeElement !== input) { stop(); } });
+  $('rules-chip').addEventListener('click', () => vscode.postMessage({ type: 'openRules' }));
   $('add-ctx').addEventListener('click', () => vscode.postMessage({ type: 'pickContext' }));
   $('clear-btn').addEventListener('click', () => vscode.postMessage({ type: 'clearChat' }));
   $('setkey-btn').addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
@@ -331,6 +329,41 @@
     if (actions.childNodes.length) { card.appendChild(actions); }
     stick(wasNear);
   }
+
+  // Friendly error cards (API errors from chat, commands and fixes). Text only.
+  const ERR = {
+    missing_key: ['🔑', 'Connect Grok', 'No xAI API key is set yet.'],
+    auth: ['🔑', 'xAI rejected the API key', 'The key is invalid, revoked, or lacks access to this model.'],
+    quota_exceeded: ['💳', 'Out of xAI credits', 'Your xAI account has no credits or hit its spending limit.'],
+    rate_limit: ['⏳', 'Grok is rate-limited', 'xAI asked us to slow down. VSGrok already retried with backoff.'],
+    server: ['🛰', 'xAI is having trouble', 'xAI returned a server error. VSGrok already retried.'],
+    offline: ['📡', "You're offline", "VSGrok can't reach api.x.ai. Check your connection, proxy or vsgrok.baseUrl."],
+    network: ['📡', 'Connection dropped', 'The connection to xAI was interrupted.'],
+    timeout: ['⌛', 'Request timed out', 'xAI sent no data for too long. Try again, or raise vsgrok.requestTimeoutSeconds.'],
+    context_length: ['📚', 'Too much context', 'The request is larger than the model context window. Remove some context chips or start a new chat.'],
+    generic: ['⚠', 'Something went wrong', ''],
+  };
+  function errorCard(e, inTurn) {
+    const kind = ERR[e.kind] ? e.kind : 'generic'; const d = ERR[kind];
+    const card = document.createElement('div'); card.className = 'error-card'; card.dataset.kind = kind; card.setAttribute('role', 'alert');
+    const head = document.createElement('div'); head.className = 'error-head';
+    const ic = document.createElement('span'); ic.className = 'error-icon'; ic.setAttribute('aria-hidden', 'true'); ic.textContent = d[0];
+    const ti = document.createElement('span'); ti.textContent = d[1] + (e.source ? ' · ' + String(e.source).replace(/^Grok: /, '').replace(/…$/, '') : '');
+    head.append(ic, ti); card.appendChild(head);
+    if (d[2]) { const h = document.createElement('div'); h.className = 'error-hint'; h.textContent = d[2]; card.appendChild(h); }
+    const det = document.createElement('details'); det.className = 'error-detail';
+    const sm = document.createElement('summary'); sm.textContent = 'Details' + (e.attempts > 1 ? ' (' + e.attempts + ' attempts)' : ''); det.appendChild(sm);
+    const pre = document.createElement('pre'); pre.textContent = String(e.msg || ''); det.appendChild(pre); card.appendChild(det);
+    const acts = document.createElement('div'); acts.className = 'approval-actions';
+    const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'approval-btn ' + cls; x.textContent = label; x.addEventListener('click', fn); acts.appendChild(x); };
+    if (kind === 'missing_key' || kind === 'auth') { b('Set API Key', 'approve', () => vscode.postMessage({ type: 'setApiKey' })); }
+    if (kind === 'quota_exceeded') { b('Open xAI Console', 'approve', () => vscode.postMessage({ type: 'openLink', url: 'https://console.x.ai' })); }
+    if (inTurn && kind !== 'missing_key') { b('Retry', kind === 'auth' || kind === 'quota_exceeded' ? 'deny' : 'approve', () => vscode.postMessage({ type: 'regenerate' })); }
+    b('Copy diagnostics', 'deny', () => vscode.postMessage({ type: 'copyDiagnostics' }));
+    if (!inTurn) { b('Dismiss', 'deny', () => card.remove()); }
+    card.appendChild(acts);
+    return card;
+  }
   window.addEventListener('message', (ev) => {
     const m = ev.data || {};
     switch (m.type) {
@@ -385,6 +418,15 @@
       case 'approvalRequest': addApprovalCard(String(m.reqId), m.request); break;
       case 'approvalResolved': resolveApprovalCard(String(m.reqId), String(m.state || 'cancelled')); break;
       case 'updateCard': renderUpdateCard(m.card); break;
+      case 'errorCard': { const wn = nearBottom(); if (m.card) { messagesEl.appendChild(errorCard(m.card, false)); } stick(wn); break; }
+      case 'rules': {
+        const rc = $('rules-chip'); const files = Array.isArray(m.files) ? m.files : [];
+        rc.hidden = !files.length;
+        rc.textContent = '📜 Rules';
+        rc.title = files.length ? 'Project rules active: ' + files.join(', ') + (m.truncated ? ' (truncated to 20k chars)' : '') + '. Grok follows them in every chat. Click to open.' : '';
+        rc.setAttribute('aria-label', rc.title || 'Project rules');
+        break;
+      }
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
       case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }

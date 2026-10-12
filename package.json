@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -98,6 +98,16 @@
         "command": "vsgrok.clearApiKey",
         "title": "Clear API Key",
         "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.copyDiagnostics",
+        "title": "Copy Diagnostics",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.reindex",
+        "title": "Rebuild Workspace Index",
+        "category": "VSGrok"
       }
     ],
     "menus": {
@@ -184,7 +194,10 @@
         },
         "vsgrok.api": {
           "type": "string",
-          "enum": ["responses", "chat"],
+          "enum": [
+            "responses",
+            "chat"
+          ],
           "enumDescriptions": [
             "xAI Responses API (POST /v1/responses): server-side history, reasoning summaries, Web/X Search, Code Execution.",
             "Legacy Chat Completions API (POST /v1/chat/completions). Fallback only: no server-side tools or citations."
@@ -245,7 +258,13 @@
         },
         "vsgrok.reasoningEffort": {
           "type": "string",
-          "enum": ["default", "low", "medium", "high", "xhigh"],
+          "enum": [
+            "default",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
           "default": "default",
           "markdownDescription": "`reasoning_effort` for Grok reasoning models (grok-4.5+; `xhigh` on grok-4.6+). `default` omits it (xAI default is `high`). `low` is faster for agentic tool use. Not applied to inline completions. See [xAI reasoning docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)."
         },
@@ -309,6 +328,31 @@
           ],
           "default": "galactic",
           "description": "Chat panel appearance. High-contrast themes always use VS Code colors."
+        },
+        "vsgrok.diagnostics.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Record a local diagnostics log (request timing, retries, error kinds, tool names, index stats). Never records your API key, prompts, responses or file contents. Stays on this machine; **VSGrok: Copy Diagnostics** copies it for a bug report."
+        },
+        "vsgrok.index.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Build a local workspace index (file paths, symbol outlines, BM25 lexical search) for the `find_relevant_files` tool. Runs entirely on your machine; no embedding service. Respects `.gitignore`; never indexes `.env` or credential files."
+        },
+        "vsgrok.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra glob patterns to keep out of the workspace index, e.g. `[\"**/fixtures/**\", \"data/**\"]`."
+        },
+        "vsgrok.index.maxFiles": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 50000,
+          "description": "Maximum files in the workspace index (shallowest paths first). Larger repos are capped."
         }
       }
     }
@@ -320,14 +364,20 @@
     "package": "pnpm run check-types && pnpm run lint && node esbuild.mjs --production",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "tsc -p tsconfig.test.json && node --test out-test/test/"
+    "test": "tsc -p tsconfig.test.json && node --test out-test/test/",
+    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/",
+    "test:integration": "node esbuild.mjs && tsc -p tsconfig.int.json && node out-int/test-int/runTest.js",
+    "test:all": "pnpm run test:unit && pnpm run test:integration"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.105.0",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
+    "mocha": "^12.0.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
   },
@@ -338,7 +388,10 @@
     "url": "https://github.com/GalacticOrgOfDev/VSGrok.git"
   },
   "homepage": "https://github.com/GalacticOrgOfDev/VSGrok#readme",
-  "galleryBanner": { "color": "#05060d", "theme": "dark" },
+  "galleryBanner": {
+    "color": "#05060d",
+    "theme": "dark"
+  },
   "bugs": {
     "url": "https://github.com/GalacticOrgOfDev/VSGrok/issues"
   },

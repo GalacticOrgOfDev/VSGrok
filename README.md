@@ -8,6 +8,9 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Code-block actions** — every code block has **Copy**, **Insert** (at cursor / replace selection) and **Apply as diff** (opens a diff of the target file vs. Grok's proposal; nothing is written until you click **Approve** on the card in chat). A fence like ` ```ts path=src/a.ts ` targets that file.
 - **Context chips** — attach the current file, the current selection (shown automatically, click to pin), workspace files via quick pick, or files dragged from the Explorer. `@file` and `@workspace` in a message also still work. Attached files are sent in full up to `vsgrok.context.maxFileChars` (default 1,000,000 characters; grok-4.7 has a 500k-token context window).
 - **Workspace tools in every chat** — Grok can always call `get_workspace_overview` (folder, top-level tree, package.json/README summary, open editors, git branch/status), `read_file`, `list_files` and `search_workspace` (read-only, run directly, restricted to the workspace). It keeps calling tools until it has an answer (cap: `vsgrok.agent.maxSteps`), and each call shows in the chat as a collapsible line (e.g. *✓ Read src/a.ts*) with its output.
+- **Finds the right files** — `find_relevant_files` searches a local workspace index (paths, symbol outlines from your language servers, BM25 over contents; respects `.gitignore` and `vsgrok.index.exclude`; capped by `vsgrok.index.maxFiles`). Everything stays on your machine. `.env` and credential-looking files are never read, searched or indexed.
+- **Project rules** — put instructions in `VSGrok.md` (or `.vsgrok/rules.md`) at the workspace root; Grok follows them in every chat and a **📜 Rules** chip shows in the header while they're active.
+- **Resilient** — automatic retries with backoff for rate limits and xAI server errors (honoring `Retry-After`), offline detection, and clear in-chat error cards with one-click fixes. Optional local diagnostics log (`vsgrok.diagnostics.enabled`, never records your key or code) and **VSGrok: Copy Diagnostics** for bug reports.
 - **Agent** (header toggle, on by default, or *VSGrok: Start Agent Task*) adds the write tools:
   - `propose_edit` — applied only after you click **Approve**,
   - `run_command` — runs in the workspace root only after you click **Run**.
@@ -63,7 +66,9 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 ```bash
 pnpm install
 pnpm run check-types && pnpm run lint
-pnpm test            # unit tests incl. a fake Responses-API server (streaming events, function calls, chaining, compaction)
+pnpm test                         # unit tests
+xvfb-run -a pnpm run test:integration   # real VS Code (drop xvfb-run on desktop)
+# incl. a fake Responses-API server (streaming events, function calls, chaining, compaction)
 node esbuild.mjs     # or --watch / --production
 npx @vscode/vsce package --no-dependencies
 ```
@@ -74,4 +79,4 @@ Download `vsgrok-X.Y.Z.vsix` from [GitHub Releases](https://github.com/GalacticO
 
 ## Status
 
-v0.5.1. Unit-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.
+v0.6.0. Unit- and integration-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.

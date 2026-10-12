@@ -2,6 +2,9 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat';
 import { Updater } from './update';
+import { initDiagnostics, diagnosticsReport } from './diagnostics';
+import { workspaceIndex } from './index/workspaceIndex';
+import { executeTool } from './agent/tools';
 import { GrokInlineProvider } from './inline';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
@@ -11,6 +14,9 @@ export const XAI_CONSOLE_KEYS_URL = 'https://console.x.ai/team/default/api-keys'
 import { buildCommandPrompt, CodeAction, generateCommitMessage, fixDiagnostic, GrokQuickFixProvider } from './commands';
 
 export function activate(context: vscode.ExtensionContext) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let testApi: any;
+  initDiagnostics(context);
   initStatus(context);
   registerProposals(context);
   const chat = new ChatViewProvider(context);
@@ -27,7 +33,22 @@ export function activate(context: vscode.ExtensionContext) {
     context.secrets.onDidChange(e => { if (e.key === SECRET_KEY) { void chat.pushKeyState(); void chat.pushModels(true); } }),
   );
 
+  workspaceIndex.start(false);
+  context.subscriptions.push(workspaceIndex);
+  reg('vsgrok.copyDiagnostics', async () => {
+    await vscode.env.clipboard.writeText(await diagnosticsReport(context));
+    vscode.window.setStatusBarMessage('$(check) VSGrok diagnostics copied to clipboard (no API key or file contents).', 4000);
+  });
+  reg('vsgrok.reindex', async () => { await workspaceIndex.rebuild(); vscode.window.setStatusBarMessage(`$(check) VSGrok indexed ${workspaceIndex.size} files`, 4000); });
   const updater = new Updater(context, chat);
+  if (process.env.VSGROK_TEST === '1') {
+    testApi = { chat, updater, workspaceIndex };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    reg('vsgrok.__testRunTool', async (name: string, args: any) => {
+      const cts = new vscode.CancellationTokenSource();
+      try { return await executeTool(name, args, cts.token); } finally { cts.dispose(); }
+    });
+  }
   reg('vsgrok.checkForUpdates', () => updater.check(true));
   setTimeout(() => { void updater.autoCheck(); }, 5000);
 
@@ -95,6 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
   code('vsgrok.fixCode', 'fix');
   code('vsgrok.addComments', 'comment');
   code('vsgrok.writeTests', 'test');
+  return testApi;
 }
 
 export function deactivate() { /* disposables handled by context */ }

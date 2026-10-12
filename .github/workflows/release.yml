@@ -26,7 +26,9 @@ jobs:
           [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != package.json v$v"; exit 1; }
       - run: pnpm run check-types
       - run: pnpm run lint
-      - run: pnpm test
+      - run: pnpm run test:unit
+      - name: Integration tests (real VS Code, headless)
+        run: xvfb-run -a pnpm run test:integration
       - name: Package vsix
         run: npx --yes @vscode/vsce package --no-dependencies -o "vsgrok-${GITHUB_REF_NAME#v}.vsix"
       - name: Create GitHub Release with vsix

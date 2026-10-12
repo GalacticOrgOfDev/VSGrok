@@ -1,5 +1,6 @@
+import { reportError } from './errors';
 import * as vscode from 'vscode';
-import { streamChat, GrokApiError } from './xai/client';
+import { streamChat } from './xai/client';
 import { requestOptions, apiMode } from './config';
 import { streamResponse } from './xai/responses';
 import { COMMIT_FORMAT, renderCommitMessage } from './xai/commit';
@@ -38,7 +39,7 @@ async function oneShot(ctx: vscode.ExtensionContext, title: string, system: stri
       });
       return res.content;
     } catch (e) {
-      if ((e as GrokApiError).kind !== 'aborted') { void vscode.window.showErrorMessage((e as Error).message); }
+      reportError(e, title);
       return undefined;
     } finally { sub.dispose(); setBusy(false); }
   });
@@ -75,7 +76,7 @@ export async function fixDiagnostic(ctx: vscode.ExtensionContext, uri: vscode.Ur
     `File: ${vscode.workspace.asRelativePath(uri)} (${doc.languageId})\nProblem on line ${range.start.line + 1}: ${message}\n\nLines ${start + 1}-${end + 1}:\n\`\`\`${doc.languageId}\n${code}\n\`\`\``);
   if (!out) { return; }
   const r = await proposeRangeEdit(doc, span, stripFences(out), 'Grok fix');
-  void vscode.window.showInformationMessage(r.msg);
+  if (!r.ok) { void vscode.window.setStatusBarMessage(`VSGrok: ${r.msg}`, 4000); }
 }
 
 export class GrokQuickFixProvider implements vscode.CodeActionProvider {

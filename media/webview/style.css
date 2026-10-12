@@ -189,3 +189,19 @@ body.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light){
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-btn:hover:not(:disabled){border-color:var(--g-cyan);box-shadow:var(--g-glow)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state]{box-shadow:none}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card[data-state=approved]{border-color:rgba(63,185,80,.6)}
+/* Error cards */
+.error-card{margin:6px 0;padding:8px 10px;border-radius:8px;border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));background:var(--vscode-inputValidation-errorBackground,var(--vscode-editorWidget-background));font-size:12px}
+.error-head{display:flex;gap:6px;align-items:center;font-weight:600}
+.error-hint{margin-top:3px;color:var(--vscode-descriptionForeground)}
+.error-detail{margin-top:4px;font-size:11px}
+.error-detail summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
+.error-detail pre{margin:4px 0 0;padding:6px;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow:auto;background:var(--vscode-textCodeBlock-background);border-radius:4px}
+.error-card[data-kind=rate_limit],.error-card[data-kind=offline],.error-card[data-kind=timeout],.error-card[data-kind=network]{border-color:var(--vscode-inputValidation-warningBorder,var(--vscode-editorWarning-foreground))}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card{background:linear-gradient(135deg,rgba(255,92,122,.10),rgba(139,123,255,.06)),var(--g-panel);border:1px solid rgba(255,92,122,.5);border-radius:12px;color:var(--g-text);backdrop-filter:blur(4px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=rate_limit],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=offline],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=timeout],.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-card[data-kind=network]{border-color:rgba(255,210,122,.55);background:linear-gradient(135deg,rgba(255,210,122,.08),rgba(139,123,255,.06)),var(--g-panel)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-hint,.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-detail summary{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .error-detail pre{background:#070912;border:1px solid var(--g-border)}
+/* Project rules indicator (header) */
+.rules-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:999px;font-size:11px;cursor:pointer;border:1px solid var(--vscode-focusBorder);background:transparent;color:inherit;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules-chip[hidden]{display:none}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .rules-chip{border-color:rgba(139,123,255,.6);color:var(--g-text);background:rgba(139,123,255,.12);box-shadow:0 0 10px rgba(139,123,255,.25)}

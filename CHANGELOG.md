@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-10-12
+**Robustness**
+- Integration tests in real VS Code (`@vscode/test-electron`, headless via xvfb): activation, every contributed command registered, chat webview ready, approval-card round trip (approve / deny / Stop), project rules, workspace index (ranking, `.gitignore`, `.env` never read, incremental update), update check against a mocked release, Copy Diagnostics.
+- CI workflow (`ci.yml`) runs type-check, lint, unit and integration tests on every push and PR; the release workflow runs both suites before publishing.
+- xAI client: retries 429 and 5xx/connection errors with exponential backoff + full jitter, honoring `Retry-After` (capped at 60 s); never retries after streaming has started; cancel works during backoff; offline detection (DNS/refused/unreachable) separate from dropped connections; idle timeout kept.
+- Friendly in-chat error cards per error kind (key, credits, rate limit, xAI server, offline, timeout, context too large) with Set API Key / Open xAI Console / Retry / Copy diagnostics and expandable details (attempt count). Command and Quick Fix API errors also go to the chat instead of notifications.
+- Opt-in local diagnostics log (`vsgrok.diagnostics.enabled`, off by default): request retries, error kinds, tool names and timings, index stats, update checks. Never the API key, prompts, responses or file contents; values are redacted and truncated. **VSGrok: Copy Diagnostics** copies version/platform/settings/log for bug reports.
+
+**Codebase awareness**
+- Local workspace index: file list (git `ls-files` for exact `.gitignore` semantics, `.gitignore` parsing fallback, `vsgrok.index.exclude`), BM25 over paths, symbol names and contents, symbol outlines via `vscode.executeDocumentSymbolProvider` (lazy, cached), incremental updates from a file watcher, capped by `vsgrok.index.maxFiles` (default 5000) and a per-build read budget. No external embedding service.
+- New always-on tool `find_relevant_files` (ranked files with matching lines and symbol outlines); the system prompt tells Grok to start with it. **VSGrok: Rebuild Workspace Index**.
+- Per-project instructions: `VSGrok.md` and/or `.vsgrok/rules.md` are injected into the system prompt (20k-char cap, live-reloaded; mid-chat changes are sent as an update) and shown as a **📜 Rules** chip in the chat header (click to open).
+- `.env` and secret-looking files (keys, certificates, credentials, `.npmrc`, `.ssh/`, `.aws/` …) are never read by `read_file`, searched, or indexed.
+
 ## 0.5.1 — 2026-10-12
 - **GitHub self-update:** once a day (`vsgrok.checkForUpdates`, default on; throttled via globalState) VSGrok checks the latest GitHub release and, if newer (semver compare), shows an in-chat card: **Update now** downloads the release `.vsix` to global storage and installs it with `workbench.extensions.installExtension`, then offers **Reload Window** in chat. No notifications.
 - New command **VSGrok: Check for Updates**.

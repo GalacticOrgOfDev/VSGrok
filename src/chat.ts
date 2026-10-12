@@ -8,6 +8,9 @@ import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool, toRespo
 import { runToolLoop } from './agent/loop';
 import { proposeEdit, proposeRangeEdit } from './proposals';
 import { ApprovalBroker, setApprover } from './agent/approvals';
+import { setErrorSink } from './errors';
+import { diag } from './diagnostics';
+import { RulesWatcher, rulesPrompt } from './rules';
 import { setBusy } from './status';
 import { listModels, ModelInfo } from './xai/models';
 
@@ -16,8 +19,8 @@ const MAX_HISTORY_CHAT = 200;
 
 export const SYSTEM_PROMPT =
   'You are Grok, built by xAI, running inside VS Code through the VSGrok extension as a coding agent. ' +
-  'You are connected to the user\'s open workspace through tools: get_workspace_overview, list_files, read_file and search_workspace are always available and run instantly without asking the user. ' +
-  'When a question involves the user\'s code, project, files or "the workspace", call these tools in this same turn and answer from what they return. ' +
+  'You are connected to the user\'s open workspace through tools: find_relevant_files (ranked files from a local index), get_workspace_overview, list_files, read_file and search_workspace are always available and run instantly without asking the user. ' +
+  'When a question involves the user\'s code, project, files or "the workspace", call these tools in this same turn and answer from what they return; for "where/how" questions start with find_relevant_files. Files like .env and credentials are never readable. ' +
   'Never announce an action ("I\'ll take a look", "Let me check") without making the tool call in the same response, and never end your turn promising to do something later. ' +
   'Either call a tool now or give your final answer. Keep going, calling tools as many times as needed, until you can answer. ' +
   'Be accurate and concise. Always use fenced code blocks with a language tag. ' +
@@ -63,14 +66,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private convId = newConvId();
   /** In-chat Approve/Deny cards for commands and edits. */
   private approvals = new ApprovalBroker((m) => this.post(m));
+  readonly rules = new RulesWatcher();
+  /** Hash of the project rules the current Responses chain was started/updated with. */
+  private rulesHash?: string;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? true;
     ctx.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.pushEditorState()),
       vscode.window.onDidChangeTextEditorSelection(() => this.pushEditorState()),
-      { dispose: () => { this.approvals.cancelAll('cancelled'); setApprover(undefined); } },
+      { dispose: () => { this.approvals.cancelAll('cancelled'); setApprover(undefined); setErrorSink(undefined); } },
+      this.rules,
+      this.rules.onDidChange(() => this.pushRules()),
     );
+    this.rules.start();
+    setErrorSink((c) => { void this.showCard('errorCard', c); });
     setApprover(async (req, opts) => {
       if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
       else if (!this.view.visible) { this.view.show(true); }
@@ -105,6 +115,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <button id="web-toggle" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
 <button id="x-toggle" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
+<button id="rules-chip" class="rules-chip" hidden aria-label="Project rules active"></button>
 <button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
 <button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
 <section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
@@ -130,13 +141,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   onUpdateAction?: (action: string) => void;
   /** Show (or refresh) the in-chat update card; opens the chat view if needed. */
-  async showUpdateCard(card: unknown): Promise<void> {
+  async showUpdateCard(card: unknown): Promise<void> { await this.showCard('updateCard', card); }
+  private async showCard(type: string, card: unknown): Promise<void> {
     if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
     await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
-    this.post({ type: 'updateCard', card });
+    this.post({ type, card });
   }
 
-  private post(msg: unknown) { void this.view?.webview.postMessage(msg); }
+  private pushRules() {
+    const r = this.rules.current;
+    this.post({ type: 'rules', files: r?.files ?? [], truncated: !!r?.truncated });
+  }
+
+  /** Integration-test hooks (VSGROK_TEST=1 only). */
+  readonly testPosts: unknown[] = [];
+  testReceive(m: unknown) { return this.onMessage(m); }
+  get isReady() { return this.ready; }
+
+  private post(msg: unknown) {
+    if (process.env.VSGROK_TEST === '1') { this.testPosts.push(msg); } void this.view?.webview.postMessage(msg); }
 
   private waitReady(): Promise<void> {
     if (this.ready) { return Promise.resolve(); }
@@ -151,7 +174,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'ready': {
         this.ready = true;
         this.approvals.cancelAll('panel reloaded');
-        this.pushSettings(); this.pushEditorState(); this.pushContexts(); void this.pushKeyState(); void this.pushModels();
+        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); void this.pushKeyState(); void this.pushModels();
         this.readyWaiters.splice(0).forEach(r => r());
         break;
       }
@@ -190,6 +213,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'copyMessage': break;
+      case 'copyDiagnostics': await vscode.commands.executeCommand('vsgrok.copyDiagnostics'); break;
+      case 'openRules': {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri; const f = this.rules.current?.files[0];
+        if (root && f) { await vscode.window.showTextDocument(vscode.Uri.joinPath(root, f), { preview: true }); }
+        break;
+      }
       case 'openLink': if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) { await vscode.env.openExternal(vscode.Uri.parse(m.url)); } break;
     }
   }
@@ -375,12 +404,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const content: InputItem['content'] = images?.length
       ? [{ type: 'input_text', text: full }, ...images.map(u => ({ type: 'input_image', image_url: u }))]
       : full;
-    const sysText = SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT);
+    const rules = this.rules.current;
+    const sysText = SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT) + rulesPrompt(rules);
     const newInput: InputItem[] = [];
     // `instructions` cannot be combined with previous_response_id, so the system prompt is a system message in input.
     // On a fresh chain it opens the conversation; when Agent is toggled mid-chat a new system message states the change.
     if (!this.conv.items.length) { newInput.push({ role: 'system', content: sysText }); }
     else if (this.convMode !== mode) { newInput.push({ role: 'system', content: agent ? 'Update:' + AGENT_PROMPT : 'Update:' + NO_AGENT_PROMPT }); }
+    if (this.conv.items.length && rules?.hash !== this.rulesHash) {
+      newInput.push({ role: 'system', content: rules ? 'Update: the project instructions changed.' + rulesPrompt(rules) : 'Update: the project instruction file was removed; ignore earlier project instructions.' });
+    }
+    this.rulesHash = rules?.hash;
     newInput.push({ role: 'user', content });
     this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode };
     this.convMode = mode;
@@ -439,8 +473,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }, citations: r.citations.slice(0, 50) });
     } catch (e) {
       const err = e as GrokApiError;
+      diag('chat.error', { kind: err.kind ?? 'generic', status: err.statusCode, attempts: err.attempts });
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
-      else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic' }); }
+      else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic', attempts: err.attempts }); }
       // Roll back to the last consistent state so no function_call is left without its output.
       this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev };
       this.convMode = this.preTurn.mode;
@@ -456,7 +491,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const t0 = Date.now();
     try {
       const agent = this.agentMode;
-      const sys: ChatMessage = { role: 'system', content: SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT) };
+      const sys: ChatMessage = { role: 'system', content: SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT) + rulesPrompt(this.rules.current) };
       const maxSteps = clampNum(cfg().get('agent.maxSteps'), 1, 50, 15);
       const cts = this.cts!;
       const signal = this.abort!.signal;
@@ -503,8 +538,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, cachedTokens: cached || undefined, reasoningTokens: reasoningTok || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;
+      diag('chat.error', { kind: err.kind ?? 'generic', status: err.statusCode, attempts: err.attempts });
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
-      else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic' }); }
+      else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic', attempts: err.attempts }); }
       // drop dangling assistant tool_calls without results
       const last = this.history[this.history.length - 1];
       if (last?.role === 'assistant' && last.tool_calls?.length) { this.history.pop(); }

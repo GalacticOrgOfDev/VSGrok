@@ -34,6 +34,45 @@ export interface RequestOptions {
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
   /** Sent as x-grok-conv-id to route a conversation to the same server for prompt-cache hits. */
   convId?: string;
+  /** Retries for 429/5xx/connection errors before any data arrived (default 3). */
+  maxRetries?: number;
+  /** Base backoff in ms (default 1000); tests use small values. */
+  retryBaseMs?: number;
+  /** Diagnostics hook (no key, no payload). */
+  onRetry?: (info: { attempt: number; delayMs: number; kind: ApiErrorKind; status?: number }) => void;
+}
+
+const OFFLINE_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETDOWN']);
+
+/** Parse Retry-After (seconds or HTTP date) into ms, capped at 60s. */
+export function parseRetryAfter(v: string | string[] | undefined, now = Date.now()): number | undefined {
+  const s = Array.isArray(v) ? v[0] : v;
+  if (!s) { return undefined; }
+  const n = Number(s);
+  const ms = Number.isFinite(n) ? n * 1000 : Date.parse(s) - now;
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 60_000) : undefined;
+}
+
+export function isRetryable(e: unknown): boolean {
+  if (!(e instanceof GrokApiError)) { return false; }
+  if (e.kind === 'rate_limit' || e.kind === 'server') { return true; }
+  return e.kind === 'network' || e.kind === 'offline';
+}
+
+/** Exponential backoff with full jitter; Retry-After wins when given. */
+export function backoffMs(attempt: number, baseMs: number, retryAfterMs?: number, rand = Math.random): number {
+  if (retryAfterMs !== undefined) { return retryAfterMs; }
+  const cap = Math.min(30_000, baseMs * 2 ** attempt);
+  return Math.round(cap / 2 + rand() * cap / 2);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((res, rej) => {
+    if (signal?.aborted) { rej(new GrokApiError('Request cancelled.', 'aborted')); return; }
+    const t = setTimeout(() => { signal?.removeEventListener('abort', on); res(); }, ms);
+    const on = () => { clearTimeout(t); rej(new GrokApiError('Request cancelled.', 'aborted')); };
+    signal?.addEventListener('abort', on, { once: true });
+  });
 }
 
 export interface StreamResult {
@@ -44,9 +83,13 @@ export interface StreamResult {
   latencyMs: number;
 }
 
-export type ApiErrorKind = 'auth' | 'rate_limit' | 'missing_key' | 'quota_exceeded' | 'context_length' | 'aborted' | 'timeout' | 'network' | 'generic';
+export type ApiErrorKind = 'auth' | 'rate_limit' | 'missing_key' | 'quota_exceeded' | 'context_length' | 'aborted' | 'timeout' | 'network' | 'offline' | 'server' | 'generic';
 
 export class GrokApiError extends Error {
+  /** Server-requested delay (Retry-After), ms. */
+  retryAfterMs?: number;
+  /** Attempts made before giving up (set by postXai). */
+  attempts?: number;
   constructor(message: string, public readonly kind: ApiErrorKind, public readonly statusCode?: number) {
     super(message);
     this.name = 'GrokApiError';
@@ -68,6 +111,7 @@ export function classifyHttpError(status: number, body: string): GrokApiError {
   if (status === 400 && /context|maximum|too long|tokens/.test(l)) {
     return new GrokApiError(`xAI: request exceeds the model context window. ${msg}`, 'context_length', status);
   }
+  if (status >= 500) { return new GrokApiError(`xAI server error (${status}). ${msg}`.trim(), 'server', status); }
   return new GrokApiError(`xAI API error (${status}): ${msg || 'unknown error'}`, 'generic', status);
 }
 
@@ -77,13 +121,42 @@ export interface TransportOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   convId?: string;
+  maxRetries?: number;
+  retryBaseMs?: number;
+  onRetry?: (info: { attempt: number; delayMs: number; kind: ApiErrorKind; status?: number }) => void;
 }
+
+type RetryListener = (info: { path: string; attempt: number; delayMs: number; kind: ApiErrorKind; status?: number }) => void;
+let retryListener: RetryListener | undefined;
+/** Global hook for the diagnostics log. */
+export function setRetryListener(l: RetryListener | undefined) { retryListener = l; }
 
 /**
  * POST JSON to {baseUrl}{path}. If `onEvent` is given the response is parsed as SSE and each `data:` JSON is passed to it;
  * otherwise the full body is JSON-parsed and returned. Handles abort, idle timeout and HTTP error classification.
  */
-export function postXai(path: string, payload: unknown, t: TransportOptions, onEvent?: (evt: unknown) => void): Promise<unknown> {
+export async function postXai(path: string, payload: unknown, t: TransportOptions, onEvent?: (evt: unknown) => void): Promise<unknown> {
+  const max = Math.max(0, t.maxRetries ?? 3);
+  for (let attempt = 0; ; attempt++) {
+    const st = { gotData: false };
+    try {
+      return await postOnce(path, payload, t, onEvent, st);
+    } catch (e) {
+      // Never retry once streaming has started (events already delivered), on cancel, or non-transient errors.
+      if (attempt >= max || st.gotData || !isRetryable(e) || t.signal?.aborted) {
+        if (e instanceof GrokApiError) { e.attempts = attempt + 1; }
+        throw e;
+      }
+      const ge = e as GrokApiError;
+      const delayMs = backoffMs(attempt, t.retryBaseMs ?? 1000, ge.retryAfterMs);
+      t.onRetry?.({ attempt: attempt + 1, delayMs, kind: ge.kind, status: ge.statusCode });
+      retryListener?.({ path, attempt: attempt + 1, delayMs, kind: ge.kind, status: ge.statusCode });
+      await sleep(delayMs, t.signal);
+    }
+  }
+}
+
+function postOnce(path: string, payload: unknown, t: TransportOptions, onEvent: ((evt: unknown) => void) | undefined, st: { gotData: boolean }): Promise<unknown> {
   if (!t.apiKey) {
     return Promise.reject(new GrokApiError('No xAI API key set. Run "VSGrok: Set API Key".', 'missing_key'));
   }
@@ -114,12 +187,12 @@ export function postXai(path: string, payload: unknown, t: TransportOptions, onE
         let err = '';
         res.setEncoding('utf8');
         res.on('data', (d: string) => (err += d));
-        res.on('end', () => fail(classifyHttpError(status, err)));
+        res.on('end', () => { const e = classifyHttpError(status, err); e.retryAfterMs = parseRetryAfter(res.headers['retry-after']); fail(e); });
         return;
       }
       if (onEvent) {
         const parser = new SseParser((evt) => { try { onEvent(evt); } catch (e) { req.destroy(); fail(e as Error); } });
-        res.on('data', (c: Buffer) => { resetTimer(); parser.push(c); });
+        res.on('data', (c: Buffer) => { st.gotData = true; resetTimer(); parser.push(c); });
         res.on('end', () => { parser.end(); ok(undefined); });
       } else {
         let txt = '';
@@ -146,7 +219,12 @@ export function postXai(path: string, payload: unknown, t: TransportOptions, onE
     if (t.signal?.aborted) { onAbort(); return; }
     t.signal?.addEventListener('abort', onAbort);
     resetTimer();
-    req.on('error', (e) => fail(settled ? e : new GrokApiError(`Network error: ${e.message}`, 'network')));
+    req.on('error', (e: NodeJS.ErrnoException) => {
+      if (settled) { return; }
+      fail(OFFLINE_CODES.has(String(e.code))
+        ? new GrokApiError(`Can't reach xAI (${e.code}). Check your internet connection or vsgrok.baseUrl.`, 'offline')
+        : new GrokApiError(`Network error: ${e.message}`, 'network'));
+    });
     req.write(body);
     req.end();
   });
