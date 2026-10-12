@@ -1,0 +1,52 @@
+# FOR LATER: Marketplace / Open VSX publishing. Not active until the owner sets up a publisher (docs/PUBLISHING.md).
+# GitHub Releases + in-extension self-update are handled by release.yml for now.
+name: Publish (Marketplace, for later)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != package.json v$v"; exit 1; }
+      - run: pnpm run check-types
+      - run: pnpm run lint
+      - run: pnpm test
+      - name: Package vsix
+        run: npx --yes @vscode/vsce package --no-dependencies -o vsgrok.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsgrok-vsix
+          path: vsgrok.vsix
+      - name: Publish to VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce publish --no-dependencies --packagePath vsgrok.vsix -p "$VSCE_PAT"
+      - name: Skip Marketplace (no VSCE_PAT secret)
+        if: env.VSCE_PAT == ''
+        run: echo "::warning::VSCE_PAT secret not set; skipped VS Code Marketplace publish. See docs/PUBLISHING.md."
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish vsgrok.vsix -p "$OVSX_PAT"
+      - name: Skip Open VSX (no OVSX_PAT secret)
+        if: env.OVSX_PAT == ''
+        run: echo "::warning::OVSX_PAT secret not set; skipped Open VSX publish. See docs/PUBLISHING.md."
