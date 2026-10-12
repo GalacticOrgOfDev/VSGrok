@@ -25,6 +25,7 @@ test('plan: validatePlan keeps valid ops and refuses secrets, duplicates, bad re
   assert.deepEqual(plan.changes.map(c => c.op + ':' + c.path), ['create:src/n.ts', 'modify:src/m.ts', 'delete:src/d.ts', 'rename:src/r.ts']);
   assert.equal(errors.length, 6);
   assert.ok(errors.some(e => /\.env/.test(e) && /secret/i.test(e)));
+  assert.deepEqual(validatePlan({ changes: [{ op: 'create', path: '.env', content: 'x' }, { op: 'rename', path: 'a.ts', newPath: 'id_rsa' }] }).refused.map(r => r.path), ['.env', 'a.ts']);
 });
 
 test('plan: too many changes and empty plans are reported', () => {

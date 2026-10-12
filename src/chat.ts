@@ -75,6 +75,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private problemsEnabled = true;
   private problemsTimer?: NodeJS.Timeout;
   private editedThisTurn = false;
+  private planAppliedThisTurn = false;
   /** Hash of the project rules the current Responses chain was started/updated with. */
   private rulesHash?: string;
 
@@ -91,7 +92,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       { dispose: () => onPlanApplied(undefined) },
     );
     this.rules.start();
-    onPlanApplied((e) => { this.editedThisTurn = true; this.post({ type: 'planApplied', planId: e.planId, paths: e.paths, summary: e.summary }); });
+    onPlanApplied((e) => { this.editedThisTurn = true; this.planAppliedThisTurn = true; this.post({ type: 'planApplied', planId: e.planId, paths: e.paths, summary: e.summary }); });
     setErrorSink((c) => { void this.showCard('errorCard', c); });
     setApprover(async (req, opts) => {
       if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
@@ -173,8 +174,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** After agent edits, offer to re-run problems/tests (one card per turn). */
   private offerChecks(force = false) {
+    const plan = this.planAppliedThisTurn;
     if (!this.editedThisTurn && !force) { return; }
-    this.editedThisTurn = false;
+    this.editedThisTurn = false; this.planAppliedThisTurn = false;
+    // The Plan applied card already has Re-run checks; the setting turns the offer off.
+    if (!force && plan) { return; }
+    if (!vscode.workspace.getConfiguration('vsgrok').get<boolean>('checks.offerAfterEdits', true)) { return; }
     this.post({ type: 'checksOffer' });
   }
 
@@ -417,7 +422,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let ctxText = await this.renderContext(attached);
     if (this.problemsEnabled) { const pc = problemsContext(this.problemUris(attached)); if (pc.text) { ctxText = (ctxText ? ctxText + '\n\n' : '') + pc.text; } }
     if (ctxText) { full += '\n\n--- Attached context ---\n' + ctxText; }
-    this.editedThisTurn = false;
+    this.editedThisTurn = false; this.planAppliedThisTurn = false;
 
     this.abort = new AbortController();
     this.cts = new vscode.CancellationTokenSource();

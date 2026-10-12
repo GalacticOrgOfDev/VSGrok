@@ -230,7 +230,9 @@ body.vscode-high-contrast .rules-chip,body.vscode-high-contrast-light .rules-chi
 .chip.refused{border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));color:var(--vscode-errorForeground);cursor:default}
 .plan-files{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px}
 .plan-file{display:flex;align-items:center;gap:6px;min-width:0}
-.plan-path{flex:1;min-width:0;display:flex;gap:5px;font-family:var(--vscode-editor-font-family);overflow-wrap:anywhere;cursor:pointer}
+.plan-path{flex:1;min-width:0;display:flex;gap:5px;font-family:var(--vscode-editor-font-family);overflow-wrap:break-word;cursor:pointer}
+.plan-name{min-width:0}
+.plan-new{display:block}
 .plan-op{width:1.2em;text-align:center;flex-shrink:0}
 .plan-delta{font-family:var(--vscode-editor-font-family);font-size:11px;color:var(--vscode-descriptionForeground);white-space:nowrap}
 .plan-diff{background:none;border:none;padding:0 2px;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px;white-space:nowrap}
@@ -238,8 +240,29 @@ body.vscode-high-contrast .rules-chip,body.vscode-high-contrast-light .rules-chi
 .plan-done .plan-files li,.checks-offer .plan-files li{font-family:var(--vscode-editor-font-family);font-size:11px;color:var(--vscode-descriptionForeground)}
 .checks-offer .plan-files li{font-family:inherit}
 .chip.problems-chip{cursor:pointer;border:1px solid var(--vscode-editorWarning-foreground,var(--vscode-focusBorder))}
-.chip.problems-chip.off{opacity:.6;border-style:dashed}
+.chip.problems-chip.off{color:var(--vscode-descriptionForeground);border-style:dashed}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-delta{color:var(--g-dim)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-diff{color:var(--g-cyan)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .chip.problems-chip{border-color:rgba(255,210,122,.55)}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-file input{accent-color:var(--g-cyan)}
+
+/* 0.7.0 UI review */
+.plan-card .plan-files,.plan-done .plan-files{max-height:min(45vh,320px);overflow-y:auto;padding-right:2px;overscroll-behavior:contain}
+.plan-card .approval-actions{position:sticky;bottom:0;background:inherit;padding-top:6px}
+.plan-meta{font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px}
+.plan-meta.has-delete{color:var(--vscode-gitDecoration-deletedResourceForeground,var(--vscode-errorForeground))}
+.plan-all{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--vscode-descriptionForeground)}
+.plan-file{flex-wrap:wrap}
+.plan-file.refused .plan-path{text-decoration:line-through;color:var(--vscode-disabledForeground);cursor:default}
+.plan-reason{flex-basis:100%;padding-left:calc(1.2em + 24px);font-size:11px;color:var(--vscode-errorForeground)}
+.plan-file.skipped{opacity:.5;text-decoration:line-through}
+.plan-file[data-op=delete] .plan-name{color:var(--vscode-gitDecoration-deletedResourceForeground)}
+.plan-file[data-op=create] .plan-name{color:var(--vscode-gitDecoration-addedResourceForeground)}
+.plan-file[data-op=rename] .plan-name{color:var(--vscode-gitDecoration-renamedResourceForeground)}
+.approval-card[data-state=undone]{opacity:.75;border-color:var(--vscode-widget-border,var(--vscode-descriptionForeground))}
+.approval-status:focus{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
+body.vscode-high-contrast .plan-diff,body.vscode-high-contrast-light .plan-diff{text-decoration:underline}
+body.vscode-high-contrast .approval-card,body.vscode-high-contrast-light .approval-card{border-color:var(--vscode-contrastBorder)}
+.foot-btn.checks-btn:disabled{opacity:.75}
+@container (max-width:280px){.plan-delta{flex-basis:100%;padding-left:calc(1.2em + 24px)}}
+.plan-card{container-type:inline-size}

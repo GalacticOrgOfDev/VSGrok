@@ -17,9 +17,11 @@ export function normPath(p: unknown): string | undefined {
 }
 
 /** Validate a propose_plan tool call. Returns normalized changes and human-readable errors (refused items are dropped). */
+export interface RefusedChange { op: PlanOp; path: string; newPath?: string; reason: string }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function validatePlan(args: any): { plan: PlanInput; errors: string[] } {
+export function validatePlan(args: any): { plan: PlanInput; errors: string[]; refused: RefusedChange[] } {
   const errors: string[] = [];
+  const refused: RefusedChange[] = [];
   const raw: unknown[] = Array.isArray(args?.changes) ? args.changes : [];
   if (!raw.length) { errors.push('Plan has no changes.'); }
   if (raw.length > MAX_PLAN_FILES) { errors.push(`Plan has ${raw.length} changes; max is ${MAX_PLAN_FILES}. Split it.`); }
@@ -32,12 +34,12 @@ export function validatePlan(args: any): { plan: PlanInput; errors: string[] } {
     if (!['create', 'modify', 'delete', 'rename'].includes(op)) { errors.push(`${where}: unknown op "${String(c.op)}"`); continue; }
     const path = normPath(c.path);
     if (!path) { errors.push(`${where}: invalid path "${String(c.path)}" (must be workspace-relative, no ..)`); continue; }
-    if (isSecretPath(path)) { errors.push(`${where}: refused ${path} (secrets/credentials file)`); continue; }
+    if (isSecretPath(path)) { errors.push(`${where}: refused ${path} (secrets/credentials file)`); refused.push({ op, path, reason: 'secrets/credentials file' }); continue; }
     let newPath: string | undefined;
     if (op === 'rename') {
       newPath = normPath(c.newPath);
       if (!newPath) { errors.push(`${where}: rename needs a valid newPath`); continue; }
-      if (isSecretPath(newPath)) { errors.push(`${where}: refused rename to ${newPath} (secrets/credentials name)`); continue; }
+      if (isSecretPath(newPath)) { errors.push(`${where}: refused rename to ${newPath} (secrets/credentials name)`); refused.push({ op, path, newPath, reason: 'rename target looks like a secrets/credentials file' }); continue; }
       if (newPath === path) { errors.push(`${where}: rename to the same path`); continue; }
     }
     const content = typeof c.content === 'string' ? c.content : undefined;
@@ -48,7 +50,7 @@ export function validatePlan(args: any): { plan: PlanInput; errors: string[] } {
     keys.forEach(k => touched.add(k));
     out.push({ op, path, newPath, content: op === 'delete' ? undefined : content });
   }
-  return { plan: { summary: typeof args?.summary === 'string' ? args.summary.slice(0, 500) : undefined, changes: out }, errors };
+  return { plan: { summary: typeof args?.summary === 'string' ? args.summary.slice(0, 500) : undefined, changes: out }, errors, refused };
 }
 
 /** Indices the user approved, intersected with what exists. undefined → all. */

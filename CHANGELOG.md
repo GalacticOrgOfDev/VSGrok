@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+**Plan card UI review (UIGrok)**
+- Plan card:
+  - The file list scrolls (max height about 45% of the view) and Approve/Deny stay pinned.
+  - Refused files (secrets, missing, already exists) are shown disabled with the reason and are never applied.
+  - Focus starts on a new tri-state **Select all** box instead of Approve. After a decision, focus moves to the status line and then back to the input.
+  - Op names and +/− counts are read out properly by screen readers.
+  - Paths break at `/`, and a rename target gets its own line.
+  - A meta line shows the mix (e.g. "3 new · 5 edits · 1 delete").
+  - Unchecked rows are struck through after approval.
+  - High contrast gets underlined links and contrast borders.
+- Plan applied card:
+  - Shows **↶ Plan undone** after an undo.
+  - **Undo plan** stays disabled after a non-retryable refusal.
+  - **Re-run checks** gives feedback.
+  - Buttons are matched by `data-action`, and the card is announced to screen readers.
+- Problems chip: the accessible name is "Include N problems" with `aria-pressed`, the tooltip is clearer, and the off state is more readable.
+- Checks offer:
+  - Now a **🧪 Re-run checks** button under the reply instead of a card.
+  - Not shown when a Plan applied card already offers it.
+  - New setting `vsgrok.checks.offerAfterEdits`.
+- Editor context menu: actions are grouped under a **Grok** submenu. **Add Comments to This** now works on the selection or the enclosing symbol.
+- Refactor presets have descriptions, and two were added: Modernize syntax and Convert to async/await.
+- Fix Problems Here says when there are no problems instead of attempting an empty fix.
+
 ## 0.7.0 — 2026-10-12
 **Multi-file edit plans**
 - New `propose_plan` agent tool: create / modify / delete / rename up to 50 files in one in-chat **plan card**. Each file shows its op, +/− line counts, a **View diff** link and a checkbox; **Approve selected (n/N)** or **Deny**.

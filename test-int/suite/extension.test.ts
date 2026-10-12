@@ -193,7 +193,8 @@ suite('VSGrok in VS Code', () => {
     const card = await until(() => posts('approvalRequest')[n0]);
     assert.strictEqual(card.request.kind, 'plan');
     const files = card.request.files as { path: string; refused?: string }[];
-    assert.ok(!files.some(f => f.path === '.env.local' && !f.refused), 'secret file never offered as applicable');
+    assert.match(String(files.find(f => f.path === '.env.local')?.refused), /secret/, 'secret file shown as a refused row');
+    assert.strictEqual(files.findIndex(f => f.refused), files.length - 1, 'refused rows come after usable rows');
     const idx = (path: string) => files.findIndex(f => f.path === path);
     await api.chat.testReceive({ type: 'approvalViewDiff', reqId: card.reqId, index: idx('src/billing.ts') });
     await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'approve', selected: [idx('src/p1.ts'), idx('src/billing.ts')] });
@@ -220,6 +221,7 @@ suite('VSGrok in VS Code', () => {
     await api.chat.testReceive({ type: 'undoPlan', planId: applied.planId });
     const undone = await until(() => posts('planUndone').find(m => m.planId === applied.planId));
     assert.strictEqual(undone.ok, false);
+    assert.ok(!undone.retryable, 'a changed-file refusal is not retryable');
     assert.strictEqual(await rd('src/p3.ts'), 'user edit\n');
     await vscode.workspace.fs.delete(vscode.Uri.joinPath(root(), 'src/p3.ts'));
   });
@@ -289,8 +291,18 @@ suite('VSGrok in VS Code', () => {
     assert.match(msg.text, /^Refactor .*: Extract smaller functions/);
     await idle();
     const ext = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!;
-    const menu = (ext.packageJSON.contributes.menus['editor/context'] as { command: string }[]).map(m => m.command);
-    for (const c of ['vsgrok.explainThis', 'vsgrok.writeTestsForThis', 'vsgrok.fixProblemsHere', 'vsgrok.refactor']) { assert.ok(menu.includes(c), c); }
+    const menus = ext.packageJSON.contributes.menus;
+    assert.deepStrictEqual(menus['editor/context'].map((m: { submenu?: string }) => m.submenu), ['vsgrok.editorSubmenu']);
+    assert.strictEqual(ext.packageJSON.contributes.submenus[0].label, 'Grok');
+    const menu = (menus['vsgrok.editorSubmenu'] as { command: string }[]).map(m => m.command);
+    assert.deepStrictEqual(menu, ['vsgrok.explainThis', 'vsgrok.writeTestsForThis', 'vsgrok.fixProblemsHere', 'vsgrok.refactor', 'vsgrok.addComments']);
+
+    ed.selection = new vscode.Selection(3, 0, 3, 0); // no selection: enclosing class symbol or fallback
+    u0 = posts('userMessage').length;
+    await vscode.commands.executeCommand('vsgrok.addComments');
+    msg = await until(() => posts('userMessage')[u0]);
+    assert.match(msg.text, /^Add clear, concise comments .* in src\/billing\.ts/);
+    await idle();
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   });
 });

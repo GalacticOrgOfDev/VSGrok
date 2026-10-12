@@ -55,7 +55,7 @@
       },
       {
         "command": "vsgrok.addComments",
-        "title": "Add Comments",
+        "title": "Add Comments to This",
         "category": "VSGrok"
       },
       {
@@ -133,29 +133,9 @@
     "menus": {
       "editor/context": [
         {
-          "command": "vsgrok.explainThis",
+          "submenu": "vsgrok.editorSubmenu",
           "when": "editorTextFocus",
           "group": "vsgrok@1"
-        },
-        {
-          "command": "vsgrok.writeTestsForThis",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "vsgrok@2"
-        },
-        {
-          "command": "vsgrok.fixProblemsHere",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "vsgrok@3"
-        },
-        {
-          "command": "vsgrok.refactor",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "vsgrok@4"
-        },
-        {
-          "command": "vsgrok.addComments",
-          "when": "editorHasSelection && !editorReadonly",
-          "group": "vsgrok@5"
         }
       ],
       "explorer/context": [
@@ -191,6 +171,33 @@
         {
           "command": "vsgrok.refactor",
           "when": "editorIsOpen"
+        }
+      ],
+      "vsgrok.editorSubmenu": [
+        {
+          "command": "vsgrok.explainThis",
+          "when": "editorTextFocus",
+          "group": "1_grok@1"
+        },
+        {
+          "command": "vsgrok.writeTestsForThis",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "1_grok@2"
+        },
+        {
+          "command": "vsgrok.fixProblemsHere",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "1_grok@3"
+        },
+        {
+          "command": "vsgrok.refactor",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "1_grok@4"
+        },
+        {
+          "command": "vsgrok.addComments",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "1_grok@5"
         }
       ]
     },
@@ -399,9 +406,20 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Command `run_tests` uses (e.g. `pnpm test`, `pytest -q`). Empty = detect from package.json scripts, pytest config, go.mod or Cargo.toml. Always shown on an approval card before it runs."
+        },
+        "vsgrok.checks.offerAfterEdits": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "After the agent edits files, show a **Re-run checks** button under its reply (not shown when the Plan applied card already offers it)."
         }
       }
-    }
+    },
+    "submenus": [
+      {
+        "id": "vsgrok.editorSubmenu",
+        "label": "Grok"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
@@ -417,6 +435,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.105.0",
@@ -424,6 +443,7 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
+    "jsdom": "^25.0.1",
     "mocha": "^12.0.3",
     "ovsx": "^1.2.0",
     "typescript": "^5.9.3",

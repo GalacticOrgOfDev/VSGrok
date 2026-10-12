@@ -52,22 +52,35 @@
   }
 
   const OP = { create: { icon: '＋', label: 'new' }, modify: { icon: '✎', label: 'edit' }, delete: { icon: '🗑', label: 'delete' }, rename: { icon: '➜', label: 'rename' } };
-  /** Plan card view model. */
+  /** Plan card view model. Refused rows are shown but never selectable. */
   function planSpec(r) {
     const files = (r && Array.isArray(r.files) ? r.files : []).map((f, i) => {
-      const o = OP[f.op] || OP.modify;
-      return { index: i, icon: o.icon, opLabel: o.label, path: String(f.path || '') + (f.op === 'rename' && f.newPath ? ' → ' + f.newPath : ''),
-        delta: (f.op === 'delete' ? '' : '+' + (f.added | 0) + ' ') + '−' + (f.removed | 0), diff: true };
+      const o = OP[f.op] || OP.modify; const op = OP[f.op] ? f.op : 'modify';
+      const added = f.added | 0, removed = f.removed | 0;
+      return { index: i, op, icon: o.icon, opLabel: o.label, path: String(f.path || ''), newPath: op === 'rename' && f.newPath ? String(f.newPath) : '',
+        delta: f.refused ? '' : (op === 'delete' ? '' : '+' + added + ' ') + '−' + removed,
+        deltaLabel: f.refused ? '' : (op === 'delete' ? removed + ' lines removed' : added + ' lines added, ' + removed + ' removed'),
+        refused: !!f.refused, reason: f.refused ? String(typeof f.refused === 'string' ? f.refused : (f.reason || 'refused')) : '', diff: !f.refused };
     });
-    const tot = files.length;
-    return { title: '✦ Grok proposes a plan · ' + tot + ' file' + (tot === 1 ? '' : 's'), summary: r && r.summary ? String(r.summary) : '', files };
+    const usable = files.filter(f => !f.refused);
+    const n = { create: 0, modify: 0, delete: 0, rename: 0 }; usable.forEach(f => n[f.op]++);
+    const pl = (k, one, many) => n[k] ? n[k] + ' ' + (n[k] === 1 ? one : many) : '';
+    const refusedN = files.length - usable.length;
+    const meta = [pl('create', 'new', 'new'), pl('modify', 'edit', 'edits'), pl('rename', 'rename', 'renames'), pl('delete', 'delete', 'deletes'), refusedN ? refusedN + ' refused' : ''].filter(Boolean).join(' · ');
+    const tot = usable.length;
+    return { title: '✦ Grok proposes a plan · ' + tot + ' file' + (tot === 1 ? '' : 's'), meta, hasDelete: n.delete > 0, summary: r && r.summary ? String(r.summary) : '', files, usable: tot };
   }
+  /** Split a path into segments that may break after each "/". */
+  function pathParts(p) { return String(p).split(/(?<=\/)/); }
   function approveLabel(selected, total) { return selected === total ? 'Approve all (' + total + ')' : 'Approve selected (' + selected + '/' + total + ')'; }
   function problemsChip(count, enabled) {
     if (!count) { return { hidden: true }; }
-    return { hidden: false, text: (enabled ? '⚠ ' : '⊘ ') + count + ' problem' + (count === 1 ? '' : 's'),
-      tooltip: enabled ? 'Problems in the active and attached files are sent with your next message. Click to stop including them.' : 'Problems are not included. Click to include them with your next message.' };
+    const noun = 'problem' + (count === 1 ? '' : 's');
+    return { hidden: false, glyph: enabled ? '⚠' : '⊘', text: count + ' ' + noun, ariaLabel: 'Include ' + count + ' ' + noun,
+      tooltip: enabled ? 'Problems from the active and attached files are sent with each message. Click to stop.' : 'Problems aren\'t being sent. Click to include them.' };
   }
+  /** Tri-state for the plan card's Select all box. */
+  function selectAllState(checked, total) { return { checked: total > 0 && checked === total, indeterminate: checked > 0 && checked < total }; }
 
-  return { ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip };
+  return { ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
 });

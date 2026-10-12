@@ -121,7 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   code('vsgrok.explainCode', 'explain');
   code('vsgrok.fixCode', 'fix');
-  code('vsgrok.addComments', 'comment');
+  reg('vsgrok.addComments', () => runEditorAction(chat, 'comment'));
   code('vsgrok.writeTests', 'test');
   return testApi;
 }

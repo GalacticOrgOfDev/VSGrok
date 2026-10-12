@@ -113,7 +113,8 @@
     chipsEl.hidden = list.length === 0 && pv.hidden;
     if (!pv.hidden) {
       const pc = document.createElement('button'); pc.type = 'button'; pc.className = 'chip problems-chip' + (state.problems.enabled ? '' : ' off');
-      pc.textContent = pv.text; pc.title = pv.tooltip; pc.setAttribute('aria-pressed', String(state.problems.enabled));
+      const gl = document.createElement('span'); gl.className = 'chip-glyph'; gl.textContent = pv.glyph; gl.setAttribute('aria-hidden', 'true');
+      pc.append(gl, document.createTextNode(' ' + pv.text)); pc.title = pv.tooltip; pc.setAttribute('aria-label', pv.ariaLabel); pc.setAttribute('aria-pressed', String(state.problems.enabled));
       pc.addEventListener('click', () => vscode.postMessage({ type: 'toggleProblems' }));
       chipsEl.appendChild(pc);
     }
@@ -149,6 +150,13 @@
     return t;
   }
 
+  function addChecksButton(foot) {
+    if (!foot || foot.querySelector('.checks-btn')) { return; }
+    const b = btn('🧪 Re-run checks', () => { b.disabled = true; b.textContent = '🧪 Asked Grok to re-run the checks'; vscode.postMessage({ type: 'rerunChecks' }); });
+    b.classList.add('checks-btn'); b.title = 'Check Problems and run the tests on the files Grok changed?';
+    foot.appendChild(b);
+  }
+  function lastAssistantFooter() { const all = messagesEl.querySelectorAll('.message.assistant .msg-footer'); return all.length ? all[all.length - 1] : null; }
   function finishTurn(t, st, extra) {
     if (!t || t.state !== 'streaming') { return; }
     t.state = st; t.el.dataset.state = st;
@@ -162,6 +170,7 @@
     } else {
       foot.appendChild(btn('Copy message', (b) => { navigator.clipboard.writeText(t.raw); vscode.postMessage({ type: 'copyMessage' }); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy message'), 1500); }));
       const rg = btn('Regenerate', () => vscode.postMessage({ type: 'regenerate' })); rg.classList.add('regen-btn'); foot.appendChild(rg);
+      if (t.offerChecks) { addChecksButton(foot); }
       if (extra && extra.meta) {
         const m = extra.meta; const parts = [];
         if (m.model) { parts.push(m.model); }
@@ -274,42 +283,86 @@
 
   // In-chat approval cards (commands, edits). Text only via textContent; decision goes back with reqId.
   const approvalCards = new Map();
+  // Keyboard focus after a decision: hold it on the card's status line, then hand it back to the input.
+  function holdFocus(card, status, text) {
+    status.tabIndex = -1; status.textContent = text; status.focus({ preventScroll: true });
+    card.dataset.heldFocus = '1';
+  }
+  function releaseFocus(card) {
+    if (card.dataset.heldFocus !== '1') { return; }
+    delete card.dataset.heldFocus;
+    const a = document.activeElement;
+    if (!a || a === document.body || card.contains(a)) { input.focus({ preventScroll: true }); }
+  }
+  function pathNodes(el, p) {
+    VSGrokCards.pathParts(p).forEach((seg, i, all) => { el.appendChild(document.createTextNode(seg)); if (i < all.length - 1) { el.appendChild(document.createElement('wbr')); } });
+  }
   function addPlanCard(reqId, r) {
     const wasNear = nearBottom();
     const v = VSGrokCards.planSpec(r);
     const card = document.createElement('div'); card.className = 'approval-card plan-card'; card.dataset.kind = 'plan'; card.setAttribute('role', 'group'); card.setAttribute('aria-label', v.title);
     const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = v.title; card.appendChild(head);
+    if (v.meta) { const mt = document.createElement('div'); mt.className = 'plan-meta' + (v.hasDelete ? ' has-delete' : ''); mt.textContent = v.meta; card.appendChild(mt); }
     if (v.summary) { const sm = document.createElement('div'); sm.className = 'approval-meta'; sm.textContent = v.summary; card.appendChild(sm); }
+    // Select all (tri-state)
+    const allRow = document.createElement('div'); allRow.className = 'plan-all';
+    const all = document.createElement('input'); all.type = 'checkbox'; all.id = reqId + '-all';
+    const allLab = document.createElement('label'); allLab.htmlFor = all.id; allLab.textContent = 'Select all';
+    allRow.append(all, allLab); card.appendChild(allRow);
     const list = document.createElement('ul'); list.className = 'plan-files';
-    const boxes = [];
+    const boxes = []; // { cb, li, index } for usable rows only
     for (const f of v.files) {
-      const li = document.createElement('li'); li.className = 'plan-file';
-      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = reqId + '-f' + f.index; boxes.push(cb);
+      const li = document.createElement('li'); li.className = 'plan-file'; li.dataset.op = f.op;
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = reqId + '-f' + f.index;
       const lab = document.createElement('label'); lab.htmlFor = cb.id; lab.className = 'plan-path';
-      const op = document.createElement('span'); op.className = 'plan-op'; op.textContent = f.icon; op.title = f.opLabel; op.setAttribute('aria-label', f.opLabel);
-      const pt = document.createElement('span'); pt.textContent = f.path;
-      lab.append(op, pt);
-      const dl = document.createElement('span'); dl.className = 'plan-delta'; dl.textContent = f.delta;
-      const vd = document.createElement('button'); vd.type = 'button'; vd.className = 'plan-diff'; vd.textContent = 'View diff'; vd.setAttribute('aria-label', 'View diff for ' + f.path);
-      vd.addEventListener('click', () => vscode.postMessage({ type: 'approvalViewDiff', reqId, index: f.index }));
-      li.append(cb, lab, dl, vd); list.appendChild(li);
+      const op = document.createElement('span'); op.className = 'plan-op'; op.textContent = f.icon; op.title = f.opLabel; op.setAttribute('aria-hidden', 'true');
+      const sr = document.createElement('span'); sr.className = 'sr-only'; sr.textContent = f.opLabel + ': ';
+      const pt = document.createElement('span'); pt.className = 'plan-name'; pathNodes(pt, f.path);
+      if (f.newPath) { const np = document.createElement('span'); np.className = 'plan-new'; np.appendChild(document.createTextNode('→ ')); pathNodes(np, f.newPath); pt.appendChild(np); }
+      lab.append(op, sr, pt);
+      li.append(cb, lab);
+      if (f.refused) {
+        cb.checked = false; cb.disabled = true; li.classList.add('refused');
+        const rs = document.createElement('span'); rs.className = 'plan-reason'; rs.id = reqId + '-r' + f.index; rs.textContent = '⛔ ' + f.reason;
+        cb.setAttribute('aria-describedby', rs.id); li.appendChild(rs);
+      } else {
+        cb.checked = true; boxes.push({ cb, li, index: f.index });
+        const dl = document.createElement('span'); dl.className = 'plan-delta'; dl.textContent = f.delta; dl.setAttribute('aria-label', f.deltaLabel);
+        const vd = document.createElement('button'); vd.type = 'button'; vd.className = 'plan-diff'; vd.textContent = 'View diff'; vd.setAttribute('aria-label', 'View diff for ' + f.path);
+        vd.addEventListener('click', () => vscode.postMessage({ type: 'approvalViewDiff', reqId, index: f.index }));
+        li.append(dl, vd);
+      }
+      list.appendChild(li);
     }
     card.appendChild(list);
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const ok = document.createElement('button'); ok.className = 'approval-btn approve';
     const deny = document.createElement('button'); deny.className = 'approval-btn deny'; deny.textContent = 'Deny';
-    const sync = () => { const n = boxes.filter(b => b.checked).length; ok.textContent = VSGrokCards.approveLabel(n, boxes.length); ok.disabled = n === 0; };
-    boxes.forEach(b => b.addEventListener('change', sync)); sync();
-    const decide = (decision) => { card.classList.add('pending'); card.querySelectorAll('button,input').forEach(b => (b.disabled = true));
-      vscode.postMessage({ type: 'approvalResponse', reqId, decision, selected: boxes.map((b, i) => b.checked ? i : -1).filter(i => i >= 0) }); };
+    const sync = () => {
+      const n = boxes.filter(b => b.cb.checked).length;
+      ok.textContent = VSGrokCards.approveLabel(n, boxes.length); ok.disabled = n === 0;
+      const st = VSGrokCards.selectAllState(n, boxes.length); all.checked = st.checked; all.indeterminate = st.indeterminate;
+    };
+    boxes.forEach(b => b.cb.addEventListener('change', sync));
+    all.addEventListener('change', () => { boxes.forEach(b => (b.cb.checked = all.checked)); sync(); });
+    all.disabled = boxes.length === 0; sync();
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite');
+    const decide = (decision) => {
+      card.classList.add('pending');
+      boxes.forEach(b => b.li.classList.toggle('skipped', decision === 'approve' && !b.cb.checked));
+      card.querySelectorAll('button,input').forEach(b => (b.disabled = true));
+      vscode.postMessage({ type: 'approvalResponse', reqId, decision, selected: boxes.filter(b => b.cb.checked).map(b => b.index) });
+      holdFocus(card, status, decision === 'approve' ? 'Applying…' : 'Denying…');
+    };
     ok.addEventListener('click', () => decide('approve')); deny.addEventListener('click', () => decide('deny'));
     actions.append(ok, deny); card.appendChild(actions);
-    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    card.appendChild(status);
     const t = state.streaming ? turns.get(state.streaming) : null;
     (t && t.tools ? t.tools : messagesEl).appendChild(card);
     approvalCards.set(reqId, card);
-    stick(wasNear); ok.focus({ preventScroll: true });
-    announce.textContent = 'Approval needed: ' + v.title;
+    // Don't focus Approve: a stray Enter would approve up to 50 changes. Start on Select all.
+    stick(wasNear); (all.disabled ? deny : all).focus({ preventScroll: true });
+    announce.textContent = 'Approval needed: ' + v.title + (v.meta ? ', ' + v.meta : '');
   }
   function infoCard(cls, title, lines, buttons) {
     const wasNear = nearBottom();
@@ -317,7 +370,7 @@
     const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = title; card.appendChild(head);
     if (lines && lines.length) { const ul = document.createElement('ul'); ul.className = 'plan-files'; for (const l of lines.slice(0, 50)) { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); } card.appendChild(ul); }
     const actions = document.createElement('div'); actions.className = 'approval-actions';
-    for (const b of buttons) { const x = document.createElement('button'); x.className = 'approval-btn ' + (b.primary ? 'approve' : 'deny'); x.textContent = b.label; x.addEventListener('click', () => b.fn(x, card)); actions.appendChild(x); }
+    for (const b of buttons) { const x = document.createElement('button'); x.className = 'approval-btn ' + (b.primary ? 'approve' : 'deny'); x.textContent = b.label; if (b.action) { x.dataset.action = b.action; } x.addEventListener('click', () => b.fn(x, card)); actions.appendChild(x); }
     card.appendChild(actions);
     const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
     const t = state.streaming ? turns.get(state.streaming) : null;
@@ -346,7 +399,7 @@
     }
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', fn); actions.appendChild(b); return b; };
-    const decide = (decision) => { card.classList.add('pending'); actions.querySelectorAll('button').forEach(b => (b.disabled = true)); vscode.postMessage({ type: 'approvalResponse', reqId, decision }); };
+    const decide = (decision) => { card.classList.add('pending'); actions.querySelectorAll('button').forEach(b => (b.disabled = true)); vscode.postMessage({ type: 'approvalResponse', reqId, decision }); holdFocus(card, card.querySelector('.approval-status'), decision === 'approve' ? (r.kind === 'command' ? 'Running…' : 'Applying…') : 'Denying…'); };
     const ok = mk(r.kind === 'command' ? 'Run' : 'Approve', 'approve', () => decide('approve'));
     mk('Deny', 'deny', () => decide('deny'));
     if (r.kind === 'edit') { mk('View diff', 'diff', () => vscode.postMessage({ type: 'approvalViewDiff', reqId })); }
@@ -364,7 +417,9 @@
     approvalCards.delete(reqId);
     card.classList.remove('pending'); card.dataset.state = st;
     const acts = card.querySelector('.approval-actions'); if (acts) { acts.remove(); }
-    card.querySelector('.approval-status').textContent = st === 'approved' ? '✓ Approved' : st === 'denied' ? '✕ Denied' : '⊘ ' + (st === 'panel reloaded' ? 'Cancelled (panel reloaded)' : st === 'panel closed' ? 'Cancelled (panel closed)' : 'Cancelled');
+    const stEl = card.querySelector('.approval-status');
+    stEl.textContent = st === 'approved' ? '✓ Approved' : st === 'denied' ? '✕ Denied' : '⊘ ' + (st === 'panel reloaded' ? 'Cancelled (panel reloaded)' : st === 'panel closed' ? 'Cancelled (panel closed)' : 'Cancelled');
+    releaseFocus(card);
   }
 
   // In-chat update card (GitHub releases). One card, refreshed in place.
@@ -486,25 +541,30 @@
         box.appendChild(c); setTimeout(() => c.remove(), 6000); break;
       }
       case 'planApplied': {
-        const pid = String(m.planId);
-        const card = infoCard('plan-done', '✓ Plan applied' + (m.summary ? ' · ' + String(m.summary) : ''), (m.paths || []).map(String), [
-          { label: 'Undo plan', primary: false, fn: (b) => { b.disabled = true; vscode.postMessage({ type: 'undoPlan', planId: pid }); } },
-          { label: 'Re-run checks', primary: true, fn: (b) => { b.disabled = true; vscode.postMessage({ type: 'rerunChecks' }); } },
+        const pid = String(m.planId); const paths = (m.paths || []).map(String);
+        const card = infoCard('plan-done', '✓ Plan applied' + (m.summary ? ' · ' + String(m.summary) : ''), paths, [
+          { label: 'Undo plan', action: 'undo', primary: false, fn: (b, c) => { b.disabled = true; c.querySelector('.approval-status').textContent = 'Undoing…'; vscode.postMessage({ type: 'undoPlan', planId: pid }); } },
+          { label: 'Re-run checks', action: 'checks', primary: true, fn: (b, c) => { b.disabled = true; vscode.postMessage({ type: 'rerunChecks' }); c.querySelector('.approval-status').textContent = 'Asked Grok to re-run the checks.'; } },
         ]);
-        card.dataset.planId = pid; planCards.set(pid, card); break;
+        card.dataset.planId = pid; planCards.set(pid, card);
+        announce.textContent = 'Plan applied: ' + paths.length + ' file' + (paths.length === 1 ? '' : 's');
+        break;
       }
       case 'planUndone': {
         const card = planCards.get(String(m.planId)); if (!card) { break; }
+        const undo = card.querySelector('[data-action="undo"]');
         card.querySelector('.approval-status').textContent = (m.ok ? '↶ ' : '✕ ') + String(m.msg || '');
-        if (m.ok) { card.dataset.state = 'denied'; const u = [...card.querySelectorAll('button')].find(b => b.textContent === 'Undo plan'); if (u) { u.remove(); } }
-        else { card.querySelectorAll('button').forEach(b => { if (b.textContent === 'Undo plan') { b.disabled = false; } }); }
+        if (m.ok) {
+          card.dataset.state = 'undone'; card.querySelector('.approval-head').textContent = '↶ Plan undone';
+          if (undo) { undo.remove(); }
+          announce.textContent = 'Plan undone';
+        } else if (undo) { undo.disabled = !m.retryable; }
         break;
       }
       case 'checksOffer': {
-        infoCard('checks-offer', '🧪 Re-run the checks?', ['Grok changed files in this turn. Check Problems and run the tests?'], [
-          { label: 'Re-run checks', primary: true, fn: (b, c) => { b.disabled = true; vscode.postMessage({ type: 'rerunChecks' }); c.querySelector('.approval-status').textContent = 'Asked Grok to re-run the checks.'; } },
-          { label: 'Dismiss', primary: false, fn: (_b, c) => c.remove() },
-        ]);
+        // A footer button on the assistant turn, not a card. Added when the turn finishes.
+        const t = state.streaming ? turns.get(state.streaming) : null;
+        if (t) { t.offerChecks = true; } else { addChecksButton(lastAssistantFooter()); }
         break;
       }
       case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }

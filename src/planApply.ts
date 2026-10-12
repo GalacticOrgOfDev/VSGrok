@@ -1,6 +1,6 @@
 // Multi-file edit plans: one in-chat approval card, atomic WorkspaceEdit, one-click undo.
 import * as vscode from 'vscode';
-import { requestDecision } from './agent/approvals';
+import { requestDecision, ApprovalRequest } from './agent/approvals';
 import { validatePlan, selectedIndices, hashText, PlanChange } from './agent/planCore';
 import { lineDelta } from './agent/approvals';
 import { checkReadable } from './security';
@@ -30,9 +30,11 @@ async function readText(u: vscode.Uri): Promise<string> {
 interface Prepared { c: PlanChange; uri: vscode.Uri; newUri?: vscode.Uri; old: string; next: string; refused?: string }
 
 /** Tool entry point: validate, show the plan card, apply the approved subset atomically. Returns a message for the agent. */
+type PlanFileRow = Extract<ApprovalRequest, { kind: 'plan' }>['files'][number];
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function proposePlan(args: any, signal?: AbortSignal): Promise<string> {
-  const { plan, errors } = validatePlan(args);
+  const { plan, errors, refused: refusedRows } = validatePlan(args);
   const r = root();
   const prepared: Prepared[] = [];
   for (const c of plan.changes) {
@@ -57,8 +59,11 @@ export async function proposePlan(args: any, signal?: AbortSignal): Promise<stri
 
   const files = usable.map(p => {
     const d = lineDelta(p.old, p.next);
-    return { path: p.c.path, op: p.c.op, newPath: p.c.newPath, added: d.added, removed: d.removed };
+    return { path: p.c.path, op: p.c.op, newPath: p.c.newPath, added: d.added, removed: d.removed } as PlanFileRow;
   });
+  // Refused rows are shown (disabled, with the reason) after the usable ones; their indices are never applied.
+  for (const r of refusedRows) { files.push({ path: r.path, op: r.op, newPath: r.newPath, added: 0, removed: 0, refused: r.reason }); }
+  for (const p of prepared.filter(x => x.refused)) { files.push({ path: p.c.path, op: p.c.op, newPath: p.c.newPath, added: 0, removed: 0, refused: p.refused }); }
   const decision = await requestDecision({ kind: 'plan', summary: plan.summary, files }, {
     signal,
     onViewDiff: (i) => {
@@ -121,7 +126,7 @@ function trashHint(hasDelete: boolean): string {
     ? ' Deletes go to the OS trash; if the trash is unavailable here, set "files.enableTrash" to false and try again.' : '';
 }
 
-export async function undoPlan(planId: string): Promise<{ ok: boolean; msg: string }> {
+export async function undoPlan(planId: string): Promise<{ ok: boolean; msg: string; retryable?: boolean }> {
   const p = applied.get(planId);
   if (!p) { return { ok: false, msg: 'This plan can no longer be undone (unknown or already undone).' }; }
   for (const s of p.steps) {
@@ -144,7 +149,7 @@ export async function undoPlan(planId: string): Promise<{ ok: boolean; msg: stri
     }
   }
   const ok = await vscode.workspace.applyEdit(edit);
-  if (!ok) { return { ok: false, msg: 'Undo failed; nothing was changed.' + trashHint(p.steps.some(x => x.op === 'delete')) }; }
+  if (!ok) { return { ok: false, msg: 'Undo failed; nothing was changed.' + trashHint(p.steps.some(x => x.op === 'delete')), retryable: true }; }
   for (const s of p.steps) { if (s.op === 'restore') { const d = vscode.workspace.textDocuments.find(x => x.uri.toString() === s.uri.toString()); if (d?.isDirty) { await d.save(); } } }
   applied.delete(planId);
   diag('plan.undone', { files: p.paths.length });
