@@ -71,10 +71,89 @@ export function classifyHttpError(status: number, body: string): GrokApiError {
   return new GrokApiError(`xAI API error (${status}): ${msg || 'unknown error'}`, 'generic', status);
 }
 
-export function streamChat(messages: ChatMessage[], opts: RequestOptions): Promise<StreamResult> {
-  if (!opts.apiKey) {
+export interface TransportOptions {
+  apiKey: string;
+  baseUrl: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  convId?: string;
+}
+
+/**
+ * POST JSON to {baseUrl}{path}. If `onEvent` is given the response is parsed as SSE and each `data:` JSON is passed to it;
+ * otherwise the full body is JSON-parsed and returned. Handles abort, idle timeout and HTTP error classification.
+ */
+export function postXai(path: string, payload: unknown, t: TransportOptions, onEvent?: (evt: unknown) => void): Promise<unknown> {
+  if (!t.apiKey) {
     return Promise.reject(new GrokApiError('No xAI API key set. Run "VSGrok: Set API Key".', 'missing_key'));
   }
+  const body = JSON.stringify(payload);
+  const url = new URL(t.baseUrl.replace(/\/+$/, '') + path);
+  const lib = url.protocol === 'http:' ? http : https;
+
+  return new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    const fail = (e: Error) => { if (!settled) { settled = true; cleanup(); reject(e); } };
+    const ok = (r: unknown) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
+
+    const req = lib.request({
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${t.apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: onEvent ? 'text/event-stream' : 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(t.convId ? { 'x-grok-conv-id': t.convId } : {}),
+      },
+    }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        let err = '';
+        res.setEncoding('utf8');
+        res.on('data', (d: string) => (err += d));
+        res.on('end', () => fail(classifyHttpError(status, err)));
+        return;
+      }
+      if (onEvent) {
+        const parser = new SseParser((evt) => { try { onEvent(evt); } catch (e) { req.destroy(); fail(e as Error); } });
+        res.on('data', (c: Buffer) => { resetTimer(); parser.push(c); });
+        res.on('end', () => { parser.end(); ok(undefined); });
+      } else {
+        let txt = '';
+        res.setEncoding('utf8');
+        res.on('data', (d: string) => { resetTimer(); txt += d; });
+        res.on('end', () => { try { ok(JSON.parse(txt)); } catch { fail(new GrokApiError('xAI returned invalid JSON.', 'generic', status)); } });
+      }
+      res.on('error', (e) => fail(new GrokApiError(`Stream error: ${e.message}`, 'network')));
+    });
+
+    // Idle timeout: reset on every received chunk.
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutMs = t.timeoutMs ?? 120000;
+    const resetTimer = () => {
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(() => {
+        req.destroy();
+        fail(new GrokApiError(`xAI request timed out after ${Math.round(timeoutMs / 1000)}s of no data.`, 'timeout'));
+      }, timeoutMs);
+    };
+    const onAbort = () => { req.destroy(); fail(new GrokApiError('Request cancelled.', 'aborted')); };
+    const cleanup = () => { if (timer) { clearTimeout(timer); } t.signal?.removeEventListener('abort', onAbort); };
+
+    if (t.signal?.aborted) { onAbort(); return; }
+    t.signal?.addEventListener('abort', onAbort);
+    resetTimer();
+    req.on('error', (e) => fail(settled ? e : new GrokApiError(`Network error: ${e.message}`, 'network')));
+    req.write(body);
+    req.end();
+  });
+}
+
+/** Legacy Chat Completions streaming (vsgrok.api = "chat", and inline completions). */
+export async function streamChat(messages: ChatMessage[], opts: RequestOptions): Promise<StreamResult> {
   const started = Date.now();
   const payload: Record<string, unknown> = {
     model: opts.model,
@@ -86,72 +165,17 @@ export function streamChat(messages: ChatMessage[], opts: RequestOptions): Promi
   if (opts.maxTokens) { payload.max_tokens = opts.maxTokens; }
   if (opts.reasoningEffort) { payload.reasoning_effort = opts.reasoningEffort; }
   if (opts.tools?.length) { payload.tools = opts.tools; payload.tool_choice = 'auto'; }
-  const body = JSON.stringify(payload);
-  const url = new URL(opts.baseUrl.replace(/\/+$/, '') + '/chat/completions');
-  const lib = url.protocol === 'http:' ? http : https;
-
-  return new Promise<StreamResult>((resolve, reject) => {
-    let settled = false;
-    const fail = (e: Error) => { if (!settled) { settled = true; cleanup(); reject(e); } };
-    const ok = (r: StreamResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
-
-    let content = '';
-    let finishReason: string | undefined;
-    let usage: StreamDelta['usage'];
-    const acc = new ToolCallAccumulator();
-
-    const req = lib.request({
-      hostname: url.hostname,
-      port: url.port || undefined,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${opts.apiKey}`,
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-        'Content-Length': Buffer.byteLength(body),
-        ...(opts.convId ? { 'x-grok-conv-id': opts.convId } : {}),
-      },
-    }, (res) => {
-      const status = res.statusCode ?? 0;
-      if (status < 200 || status >= 300) {
-        let err = '';
-        res.setEncoding('utf8');
-        res.on('data', (d: string) => (err += d));
-        res.on('end', () => fail(classifyHttpError(status, err)));
-        return;
-      }
-      const parser = new SseParser((evt) => {
-        const d = parseDelta(evt);
-        if (d.content) { content += d.content; opts.onContent?.(d.content); }
-        if (d.reasoning) { opts.onReasoning?.(d.reasoning); }
-        if (d.toolCalls) { acc.add(d.toolCalls); }
-        if (d.finishReason) { finishReason = d.finishReason; }
-        if (d.usage) { usage = d.usage; }
-      });
-      res.on('data', (c: Buffer) => { resetTimer(); parser.push(c); });
-      res.on('end', () => { parser.end(); ok({ content, toolCalls: acc.result(), finishReason, usage, latencyMs: Date.now() - started }); });
-      res.on('error', (e) => fail(new GrokApiError(`Stream error: ${e.message}`, 'network')));
-    });
-
-    // Idle timeout: reset on every received chunk.
-    let timer: NodeJS.Timeout | undefined;
-    const timeoutMs = opts.timeoutMs ?? 120000;
-    const resetTimer = () => {
-      if (timer) { clearTimeout(timer); }
-      timer = setTimeout(() => {
-        req.destroy();
-        fail(new GrokApiError(`xAI request timed out after ${Math.round(timeoutMs / 1000)}s of no data.`, 'timeout'));
-      }, timeoutMs);
-    };
-    const onAbort = () => { req.destroy(); fail(new GrokApiError('Request cancelled.', 'aborted')); };
-    const cleanup = () => { if (timer) { clearTimeout(timer); } opts.signal?.removeEventListener('abort', onAbort); };
-
-    if (opts.signal?.aborted) { onAbort(); return; }
-    opts.signal?.addEventListener('abort', onAbort);
-    resetTimer();
-    req.on('error', (e) => fail(settled ? e : new GrokApiError(`Network error: ${e.message}`, 'network')));
-    req.write(body);
-    req.end();
+  let content = '';
+  let finishReason: string | undefined;
+  let usage: StreamDelta['usage'];
+  const acc = new ToolCallAccumulator();
+  await postXai('/chat/completions', payload, opts, (evt) => {
+    const d = parseDelta(evt);
+    if (d.content) { content += d.content; opts.onContent?.(d.content); }
+    if (d.reasoning) { opts.onReasoning?.(d.reasoning); }
+    if (d.toolCalls) { acc.add(d.toolCalls); }
+    if (d.finishReason) { finishReason = d.finishReason; }
+    if (d.usage) { usage = d.usage; }
   });
+  return { content, toolCalls: acc.result(), finishReason, usage, latencyMs: Date.now() - started };
 }
