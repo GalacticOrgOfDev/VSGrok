@@ -1,10 +1,11 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
-import { requestOptions, cfg, clampNum } from './config';
+import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL } from './config';
 import { TOOL_SPECS, executeTool } from './agent/tools';
 import { proposeEdit, proposeRangeEdit } from './proposals';
 import { setBusy } from './status';
+import { listModels, ModelInfo } from './xai/models';
 
 const MAX_FILE_CHARS = 100_000;
 const MAX_HISTORY = 40;
@@ -68,17 +69,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${u('style.css')}"><title>VSGrok</title></head>
-<body>
-<div id="header"><div class="header-left"><span class="dot" aria-hidden="true"></span><span class="brand">VSGrok</span></div>
+<body class="theme-${cfg().get<string>('theme') === 'vscode' ? 'vscode' : 'galactic'}">
+<div id="stars" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+<div id="header"><div class="header-left"><img class="logo" src="${u('grok-icon.png')}" alt="" width="20" height="20"><span class="brand">Grok</span><span class="brand-sub">for VS Code</span></div>
 <div class="header-right">
+<select id="model" class="h-select" aria-label="Grok model" title="Grok model"></select>
 <label class="agent-toggle" title="Agent mode: Grok may read/search files, propose diffs and request commands"><input type="checkbox" id="agent"> Agent</label>
-<input id="model" class="h-input" aria-label="Model" spellcheck="false">
-<button id="settings-btn" class="h-btn" aria-label="Settings" aria-expanded="false">⚙</button>
+<button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
 <button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
+<section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
+<h2 id="welcome-title">Connect Grok</h2>
+<p>VSGrok talks to the official xAI API with your own API key. Usage is billed by xAI to your account, per token.</p>
+<ol><li>Open the xAI Console and sign in with your X or xAI account.</li><li>Create an API key (API Keys → Create).</li><li>Paste it here. It is stored in VS Code SecretStorage, never in settings.</li></ol>
+<div class="welcome-actions"><button id="get-key-btn" class="primary">Get an API key ↗</button><button id="paste-key-btn" class="h-btn">Paste API key</button></div>
+<p class="note">About SuperGrok: xAI&#39;s subscription sign-in is currently limited to partner apps xAI has approved (such as OpenCode) and is not open to other extensions, so VSGrok uses an API key. API usage is billed separately from SuperGrok in the xAI Console.</p></section>
 <div id="settings-panel">
 <div class="slider-row"><label for="temperature">Temperature</label><input type="range" id="temperature" min="0" max="2" step="0.05"><span class="val" id="temperature-val"></span></div>
 <div class="slider-row"><label for="maxTokens">Max tokens</label><input type="range" id="maxTokens" min="256" max="32768" step="256"><span class="val" id="maxTokens-val"></span></div>
-<button id="setkey-btn" class="h-btn">Set API Key</button></div>
+<div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button></div></div>
 <div id="messages-wrap"><div id="messages" role="log" aria-live="polite"></div><button id="new-output" class="pill" hidden>↓ New output</button><div id="sr-announce" class="sr-only" aria-live="polite"></div></div>
 <div id="chips"></div>
 <div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button>
@@ -102,7 +110,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     switch (m?.type) {
       case 'ready': {
         this.ready = true;
-        this.pushSettings(); this.pushEditorState(); this.pushContexts();
+        this.pushSettings(); this.pushEditorState(); this.pushContexts(); void this.pushKeyState(); void this.pushModels();
         this.readyWaiters.splice(0).forEach(r => r());
         break;
       }
@@ -116,6 +124,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'clearChat': this.stop(); this.history = []; this.post({ type: 'chatCleared' }); break;
       case 'updateSettings': await this.updateSettings(m); break;
       case 'setApiKey': await vscode.commands.executeCommand('vsgrok.setApiKey'); break;
+      case 'getApiKey': await vscode.commands.executeCommand('vsgrok.signIn'); break;
+      case 'refreshModels': await this.pushModels(true); break;
       case 'insertCode': await this.insertCode(String(m.code ?? '')); break;
       case 'applyDiff': {
         const r = await this.applyDiff(String(m.code ?? ''), typeof m.targetPath === 'string' ? m.targetPath : undefined);
@@ -148,7 +158,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   pushSettings() {
     const c = cfg();
-    this.post({ type: 'settings', model: c.get('model'), temperature: c.get('temperature'), maxTokens: c.get('maxTokens'), agent: this.agentMode });
+    this.post({ type: 'settings', model: c.get('model') || DEFAULT_MODEL, temperature: c.get('temperature'), maxTokens: c.get('maxTokens'), agent: this.agentMode, theme: c.get('theme') === 'vscode' ? 'vscode' : 'galactic' });
+  }
+
+  async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
+
+  /** Fetch (or reuse cached) model list and send it to the dropdown. */
+  async getModels(force = false): Promise<{ models: ModelInfo[]; source: string; error?: string }> {
+    const key = (await this.ctx.secrets.get(SECRET_KEY)) ?? '';
+    return listModels(this.ctx.globalState, cfg().get<string>('baseUrl') || 'https://api.x.ai/v1', key, force);
+  }
+
+  async pushModels(force = false) {
+    const r = await this.getModels(force);
+    this.post({ type: 'models', models: r.models, source: r.source, error: r.error, current: cfg().get<string>('model') || DEFAULT_MODEL });
   }
 
   private pushEditorState() {

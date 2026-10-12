@@ -19,6 +19,16 @@
   "contributes": {
     "commands": [
       {
+        "command": "vsgrok.signIn",
+        "title": "Sign In / Get API Key",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.selectModel",
+        "title": "Select Model",
+        "category": "VSGrok"
+      },
+      {
         "command": "vsgrok.query",
         "title": "Ask Grok",
         "category": "VSGrok"
@@ -165,7 +175,7 @@
         "vsgrok.model": {
           "type": "string",
           "default": "grok-4.7",
-          "description": "xAI model id used for chat, commands and agent mode (see https://docs.x.ai/docs/models)."
+          "description": "xAI model id used for chat, commands and agent mode. Pick from the chat header dropdown or 'VSGrok: Select Model' (list comes live from GET {baseUrl}/models)."
         },
         "vsgrok.baseUrl": {
           "type": "string",
@@ -227,6 +237,19 @@
           "minimum": 16,
           "maximum": 1024,
           "description": "Maximum tokens for an inline completion."
+        },
+        "vsgrok.theme": {
+          "type": "string",
+          "enum": [
+            "galactic",
+            "vscode"
+          ],
+          "enumDescriptions": [
+            "Deep-space Grok look with starfield and cosmic accents.",
+            "Plain VS Code theme colors."
+          ],
+          "default": "galactic",
+          "description": "Chat panel appearance. High-contrast themes always use VS Code colors."
         }
       }
     }

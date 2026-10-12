@@ -129,6 +129,9 @@
 
   function startTurn(id) {
     const el = document.createElement('div'); el.className = 'message assistant'; el.dataset.state = 'streaming';
+    const who = document.createElement('div'); who.className = 'who';
+    if (iconSrc) { const av = document.createElement('img'); av.className = 'avatar'; av.src = iconSrc; av.alt = ''; who.appendChild(av); }
+    const nm = document.createElement('span'); nm.textContent = 'Grok'; who.appendChild(nm); el.appendChild(who);
     const tools = document.createElement('div'); tools.className = 'tool-events';
     const body = document.createElement('div'); body.className = 'body';
     body.innerHTML = '<span class="typing" aria-label="Grok is typing"><i></i><i></i><i></i></span>';
@@ -206,7 +209,24 @@
   const sp = $('settings-panel');
   $('settings-btn').addEventListener('click', (e) => { const o = sp.classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(o)); });
   const modelIn = $('model');
-  modelIn.addEventListener('change', () => vscode.postMessage({ type: 'updateSettings', model: modelIn.value }));
+  let currentModel = '';
+  function setModelOptions(models, current) {
+    currentModel = current || currentModel;
+    const ids = models.map((m) => m.id);
+    if (currentModel && !ids.includes(currentModel)) { models = [{ id: currentModel }].concat(models); }
+    modelIn.innerHTML = '';
+    models.forEach((m) => {
+      const o = document.createElement('option'); o.value = m.id; o.textContent = m.id;
+      if (m.reasoning || m.contextLength) { o.title = [m.reasoning ? 'reasoning' : '', m.contextLength ? Math.round(m.contextLength / 1000) + 'k context' : ''].filter(Boolean).join(' · '); }
+      modelIn.appendChild(o);
+    });
+    modelIn.value = currentModel;
+  }
+  modelIn.addEventListener('change', () => { currentModel = modelIn.value; vscode.postMessage({ type: 'updateSettings', model: modelIn.value }); });
+  $('refresh-models-btn').addEventListener('click', () => vscode.postMessage({ type: 'refreshModels' }));
+  $('get-key-btn').addEventListener('click', () => vscode.postMessage({ type: 'getApiKey' }));
+  $('paste-key-btn').addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
+  const iconSrc = document.querySelector('.logo') ? document.querySelector('.logo').getAttribute('src') : '';
   ['temperature', 'maxTokens'].forEach((k) => {
     const el = $(k), v = $(k + '-val');
     el.addEventListener('input', () => (v.textContent = el.value));
@@ -227,10 +247,13 @@
     const m = ev.data || {};
     switch (m.type) {
       case 'settings':
-        if (m.model) { modelIn.value = m.model; }
+        if (m.model) { currentModel = m.model; if (!Array.from(modelIn.options).some((o) => o.value === m.model)) { setModelOptions(Array.from(modelIn.options).map((o) => ({ id: o.value })), m.model); } modelIn.value = m.model; }
+        if (m.theme) { document.body.classList.toggle('theme-galactic', m.theme !== 'vscode'); document.body.classList.toggle('theme-vscode', m.theme === 'vscode'); }
         if (m.temperature !== undefined) { $('temperature').value = m.temperature; $('temperature-val').textContent = m.temperature; }
         if (m.maxTokens !== undefined) { $('maxTokens').value = m.maxTokens; $('maxTokens-val').textContent = m.maxTokens; }
         $('agent').checked = !!m.agent; break;
+      case 'models': setModelOptions(m.models || [], m.current); modelIn.title = 'Grok model' + (m.source === 'fallback' ? ' (built-in list: ' + (m.error || 'offline') + ')' : m.source === 'live' ? ' (live from xAI)' : ''); break;
+      case 'keyState': $('welcome').hidden = !!m.hasKey; document.body.classList.toggle('no-key', !m.hasKey); break;
       case 'userMessage': addUser(m.text, m.chips); break;
       case 'streamStart': startTurn(m.id); break;
       case 'streamChunk': { const t = turns.get(m.id); if (t && t.state === 'streaming') { t.raw += m.delta; scheduleRender(t); } break; }
