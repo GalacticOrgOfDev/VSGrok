@@ -1,9 +1,11 @@
 // Agent tools. Read-only tools run directly; edits go through diff+Accept; commands need explicit confirmation.
 import * as vscode from 'vscode';
 import { ToolSpec } from '../xai/client';
+import { FunctionTool } from '../xai/responses';
 import { proposeEdit } from '../proposals';
 
-const MAX_READ = 200_000;
+/** ~1M chars ≈ 250k tokens: half of grok-4.7's 500k context (docs.x.ai/developers/models). */
+const MAX_READ = 1_000_000;
 
 /** Read-only tools: always offered in chat. */
 export const READ_TOOL_SPECS: ToolSpec[] = [
@@ -20,6 +22,11 @@ export const WRITE_TOOL_SPECS: ToolSpec[] = [
 ];
 
 export const TOOL_SPECS: ToolSpec[] = [...READ_TOOL_SPECS, ...WRITE_TOOL_SPECS];
+/** Chat Completions tool spec → Responses function tool ({type,name,description,parameters}). */
+export function toResponsesTools(specs: ToolSpec[]): FunctionTool[] {
+  return specs.map(t => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters }));
+}
+
 export const READ_ONLY_TOOL_NAMES = new Set(READ_TOOL_SPECS.map(t => t.function.name));
 
 const EXCLUDE = '**/{node_modules,.git,dist,out}/**';
