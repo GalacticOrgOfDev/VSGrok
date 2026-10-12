@@ -51,5 +51,23 @@
     };
   }
 
-  return { ERR, errorSpec, rulesChip, firstLine };
+  const OP = { create: { icon: '＋', label: 'new' }, modify: { icon: '✎', label: 'edit' }, delete: { icon: '🗑', label: 'delete' }, rename: { icon: '➜', label: 'rename' } };
+  /** Plan card view model. */
+  function planSpec(r) {
+    const files = (r && Array.isArray(r.files) ? r.files : []).map((f, i) => {
+      const o = OP[f.op] || OP.modify;
+      return { index: i, icon: o.icon, opLabel: o.label, path: String(f.path || '') + (f.op === 'rename' && f.newPath ? ' → ' + f.newPath : ''),
+        delta: (f.op === 'delete' ? '' : '+' + (f.added | 0) + ' ') + '−' + (f.removed | 0), diff: true };
+    });
+    const tot = files.length;
+    return { title: '✦ Grok proposes a plan · ' + tot + ' file' + (tot === 1 ? '' : 's'), summary: r && r.summary ? String(r.summary) : '', files };
+  }
+  function approveLabel(selected, total) { return selected === total ? 'Approve all (' + total + ')' : 'Approve selected (' + selected + '/' + total + ')'; }
+  function problemsChip(count, enabled) {
+    if (!count) { return { hidden: true }; }
+    return { hidden: false, text: (enabled ? '⚠ ' : '⊘ ') + count + ' problem' + (count === 1 ? '' : 's'),
+      tooltip: enabled ? 'Problems in the active and attached files are sent with your next message. Click to stop including them.' : 'Problems are not included. Click to include them with your next message.' };
+  }
+
+  return { ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip };
 });

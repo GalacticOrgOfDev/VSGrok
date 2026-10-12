@@ -174,4 +174,123 @@ suite('VSGrok in VS Code', () => {
     assert.match(t, /# VSGrok diagnostics/);
     assert.match(t, /API key set: (yes|no)/);
   });
+
+  // ---------- 0.7.0: plans, problems, tests, editor actions ----------
+  const root = () => vscode.workspace.workspaceFolders![0].uri;
+  const rd = async (p: string) => Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root(), p))).toString('utf8');
+  const exists = async (p: string) => { try { await vscode.workspace.fs.stat(vscode.Uri.joinPath(root(), p)); return true; } catch { return false; } };
+  const idle = () => until(() => !api.chat['busy'], 30000);
+
+  test('plan card: approve a subset applies atomically, secret refused, one Undo reverts the plan', async () => {
+    const before = await rd('src/billing.ts');
+    const n0 = posts('approvalRequest').length; const a0 = posts('planApplied').length;
+    const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { summary: 'test plan', changes: [
+      { op: 'create', path: 'src/p1.ts', content: 'export const p1 = 1;\n' },
+      { op: 'create', path: 'src/p2.ts', content: 'export const p2 = 2;\n' },
+      { op: 'modify', path: 'src/billing.ts', content: before + '// planned\n' },
+      { op: 'create', path: '.env.local', content: 'TOKEN=x' },
+    ] });
+    const card = await until(() => posts('approvalRequest')[n0]);
+    assert.strictEqual(card.request.kind, 'plan');
+    const files = card.request.files as { path: string; refused?: string }[];
+    assert.ok(!files.some(f => f.path === '.env.local' && !f.refused), 'secret file never offered as applicable');
+    const idx = (path: string) => files.findIndex(f => f.path === path);
+    await api.chat.testReceive({ type: 'approvalViewDiff', reqId: card.reqId, index: idx('src/billing.ts') });
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'approve', selected: [idx('src/p1.ts'), idx('src/billing.ts')] });
+    const out = String(await p);
+    assert.ok(await exists('src/p1.ts')); assert.ok(!(await exists('src/p2.ts'))); assert.ok(!(await exists('.env.local')));
+    assert.match(await rd('src/billing.ts'), /\/\/ planned/);
+    assert.match(out, /\.env\.local/, 'result reports the refused secret');
+    const applied = await until(() => posts('planApplied')[a0]);
+    await api.chat.testReceive({ type: 'undoPlan', planId: applied.planId });
+    const undone = await until(() => posts('planUndone').find(m => m.planId === applied.planId));
+    assert.ok(undone.ok, JSON.stringify(undone));
+    assert.ok(!(await exists('src/p1.ts')));
+    assert.strictEqual(await rd('src/billing.ts'), before);
+  });
+
+  test('plan undo refuses when a file changed after the plan was applied', async () => {
+    const n0 = posts('approvalRequest').length; const a0 = posts('planApplied').length;
+    const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { changes: [{ op: 'create', path: 'src/p3.ts', content: 'a\n' }] });
+    const card = await until(() => posts('approvalRequest')[n0]);
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'approve', selected: [0] });
+    await p;
+    const applied = await until(() => posts('planApplied')[a0]);
+    await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root(), 'src/p3.ts'), Buffer.from('user edit\n'));
+    await api.chat.testReceive({ type: 'undoPlan', planId: applied.planId });
+    const undone = await until(() => posts('planUndone').find(m => m.planId === applied.planId));
+    assert.strictEqual(undone.ok, false);
+    assert.strictEqual(await rd('src/p3.ts'), 'user edit\n');
+    await vscode.workspace.fs.delete(vscode.Uri.joinPath(root(), 'src/p3.ts'));
+  });
+
+  test('get_problems reads real diagnostics; Problems chip reflects the active file and toggles', async () => {
+    const uri = vscode.Uri.joinPath(root(), 'src/billing.ts');
+    const dc = vscode.languages.createDiagnosticCollection('vsgrok-test');
+    dc.set(uri, [new vscode.Diagnostic(new vscode.Range(1, 2, 1, 8), 'quokka type mismatch', vscode.DiagnosticSeverity.Error)]);
+    try {
+      const out = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'get_problems', { path: 'src/billing.ts' }));
+      assert.match(out, /src\/billing\.ts:2/); assert.match(out, /quokka type mismatch/);
+      await vscode.window.showTextDocument(uri);
+      const st = await until(() => { const l = posts('problemsState').at(-1); return l && l.count > 0 && l; });
+      const was = st.enabled;
+      await api.chat.testReceive({ type: 'toggleProblems' });
+      await until(() => posts('problemsState').at(-1)?.enabled === !was);
+      await api.chat.testReceive({ type: 'toggleProblems' });
+    } finally { dc.dispose(); }
+  });
+
+  test('run_tests detects npm test from package.json, goes through the approval card and parses failures', async () => {
+    const n0 = posts('approvalRequest').length;
+    const p1 = vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_tests', {});
+    const c1 = await until(() => posts('approvalRequest')[n0]);
+    assert.strictEqual(c1.request.kind, 'command'); assert.strictEqual(c1.request.command, 'npm test');
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: c1.reqId, decision: 'deny' });
+    assert.match(String(await p1), /declined/);
+    const p2 = vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_tests', {});
+    const c2 = await until(() => posts('approvalRequest')[n0 + 1]);
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: c2.reqId, decision: 'approve' });
+    const out = String(await p2);
+    assert.match(out, /exit code 1/); assert.match(out, /src\/billing\.ts:3/); assert.match(out, /adds numbers/);
+  });
+
+  test('editor actions send the selection / enclosing symbol to the chat with context attached', async () => {
+    const uri = vscode.Uri.joinPath(root(), 'src/billing.ts');
+    const ed = await vscode.window.showTextDocument(uri);
+    ed.selection = new vscode.Selection(0, 0, 2, 1);
+    await idle();
+    let u0 = posts('userMessage').length;
+    await vscode.commands.executeCommand('vsgrok.explainThis');
+    let msg = await until(() => posts('userMessage')[u0]);
+    assert.match(msg.text, /^Explain the selected code \(lines 1-3\) in src\/billing\.ts/);
+    assert.ok(msg.chips.some((c: { kind?: string; path?: string; label?: string }) => /billing\.ts/.test(JSON.stringify(c))));
+    await idle();
+
+    const dc = vscode.languages.createDiagnosticCollection('vsgrok-test2');
+    dc.set(uri, [new vscode.Diagnostic(new vscode.Range(1, 2, 1, 8), 'wombat overflow', vscode.DiagnosticSeverity.Error)]);
+    try {
+      ed.selection = new vscode.Selection(1, 3, 1, 3);
+      u0 = posts('userMessage').length;
+      await vscode.commands.executeCommand('vsgrok.fixProblemsHere');
+      msg = await until(() => posts('userMessage')[u0]);
+      assert.match(msg.text, /^Fix the problems in/); assert.match(msg.text, /wombat overflow/);
+      await idle();
+    } finally { dc.dispose(); }
+
+    u0 = posts('userMessage').length;
+    await vscode.commands.executeCommand('vsgrok.writeTestsForThis');
+    msg = await until(() => posts('userMessage')[u0]);
+    assert.match(msg.text, /^Write tests for/); assert.match(msg.text, /propose_plan/); assert.match(msg.text, /npm test/);
+    await idle();
+
+    u0 = posts('userMessage').length;
+    await vscode.commands.executeCommand('vsgrok.refactor', 'Extract smaller functions');
+    msg = await until(() => posts('userMessage')[u0]);
+    assert.match(msg.text, /^Refactor .*: Extract smaller functions/);
+    await idle();
+    const ext = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!;
+    const menu = (ext.packageJSON.contributes.menus['editor/context'] as { command: string }[]).map(m => m.command);
+    for (const c of ['vsgrok.explainThis', 'vsgrok.writeTestsForThis', 'vsgrok.fixProblemsHere', 'vsgrok.refactor']) { assert.ok(menu.includes(c), c); }
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  });
 });

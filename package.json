@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -108,29 +108,54 @@
         "command": "vsgrok.reindex",
         "title": "Rebuild Workspace Index",
         "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.explainThis",
+        "title": "Explain This",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.writeTestsForThis",
+        "title": "Write Tests for This",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.fixProblemsHere",
+        "title": "Fix Problems Here",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.refactor",
+        "title": "Refactor…",
+        "category": "VSGrok"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "vsgrok.explainCode",
-          "when": "editorHasSelection",
+          "command": "vsgrok.explainThis",
+          "when": "editorTextFocus",
           "group": "vsgrok@1"
         },
         {
-          "command": "vsgrok.fixCode",
-          "when": "editorHasSelection",
+          "command": "vsgrok.writeTestsForThis",
+          "when": "editorTextFocus && !editorReadonly",
           "group": "vsgrok@2"
         },
         {
-          "command": "vsgrok.addComments",
-          "when": "editorHasSelection",
+          "command": "vsgrok.fixProblemsHere",
+          "when": "editorTextFocus && !editorReadonly",
           "group": "vsgrok@3"
         },
         {
-          "command": "vsgrok.writeTests",
-          "when": "editorHasSelection",
+          "command": "vsgrok.refactor",
+          "when": "editorTextFocus && !editorReadonly",
           "group": "vsgrok@4"
+        },
+        {
+          "command": "vsgrok.addComments",
+          "when": "editorHasSelection && !editorReadonly",
+          "group": "vsgrok@5"
         }
       ],
       "explorer/context": [
@@ -150,6 +175,22 @@
         {
           "command": "vsgrok.fixDiagnostic",
           "when": "false"
+        },
+        {
+          "command": "vsgrok.explainThis",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "vsgrok.writeTestsForThis",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "vsgrok.fixProblemsHere",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "vsgrok.refactor",
+          "when": "editorIsOpen"
         }
       ]
     },
@@ -353,6 +394,11 @@
           "minimum": 100,
           "maximum": 50000,
           "description": "Maximum files in the workspace index (shallowest paths first). Larger repos are capped."
+        },
+        "vsgrok.testCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Command `run_tests` uses (e.g. `pnpm test`, `pytest -q`). Empty = detect from package.json scripts, pytest config, go.mod or Cargo.toml. Always shown on an approval card before it runs."
         }
       }
     }

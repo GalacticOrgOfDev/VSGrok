@@ -5,6 +5,7 @@ import { Updater } from './update';
 import { initDiagnostics, diagnosticsReport } from './diagnostics';
 import { workspaceIndex } from './index/workspaceIndex';
 import { executeTool } from './agent/tools';
+import { runEditorAction } from './editorActions';
 import { GrokInlineProvider } from './inline';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
@@ -40,6 +41,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.setStatusBarMessage('$(check) VSGrok diagnostics copied to clipboard (no API key or file contents).', 4000);
   });
   reg('vsgrok.reindex', async () => { await workspaceIndex.rebuild(); vscode.window.setStatusBarMessage(`$(check) VSGrok indexed ${workspaceIndex.size} files`, 4000); });
+  reg('vsgrok.explainThis', () => runEditorAction(chat, 'explain'));
+  reg('vsgrok.writeTestsForThis', () => runEditorAction(chat, 'tests'));
+  reg('vsgrok.fixProblemsHere', () => runEditorAction(chat, 'fix'));
+  reg('vsgrok.refactor', (instruction?: string) => runEditorAction(chat, 'refactor', typeof instruction === 'string' ? instruction : undefined));
   const updater = new Updater(context, chat);
   if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) {
     testApi = { chat, updater, workspaceIndex };

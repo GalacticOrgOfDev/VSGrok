@@ -5,12 +5,15 @@
 
 export type ApprovalRequest =
   | { kind: 'command'; title?: string; command: string }
-  | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number };
+  | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number }
+  | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string }[] };
+
+export interface ApprovalDecision { ok: boolean; selected?: number[] }
 
 export interface ApprovalCardMessage { type: 'approvalRequest'; reqId: string; request: ApprovalRequest }
-export interface ApprovalOptions { signal?: AbortSignal; onViewDiff?: () => void | Promise<void> }
+export interface ApprovalOptions { signal?: AbortSignal; onViewDiff?: (index?: number) => void | Promise<void> }
 
-interface Pending { resolve: (ok: boolean) => void; onViewDiff?: () => void | Promise<void>; cleanup: () => void }
+interface Pending { resolve: (d: ApprovalDecision) => void; onViewDiff?: (index?: number) => void | Promise<void>; cleanup: () => void }
 
 export class ApprovalBroker {
   private pending = new Map<string, Pending>();
@@ -20,9 +23,14 @@ export class ApprovalBroker {
   get size(): number { return this.pending.size; }
 
   request(req: ApprovalRequest, opts: ApprovalOptions = {}): Promise<boolean> {
-    if (opts.signal?.aborted) { return Promise.resolve(false); }
+    return this.requestDecision(req, opts).then(d => d.ok);
+  }
+
+  /** Like request(), but also returns the user's per-item selection (plan cards). */
+  requestDecision(req: ApprovalRequest, opts: ApprovalOptions = {}): Promise<ApprovalDecision> {
+    if (opts.signal?.aborted) { return Promise.resolve({ ok: false }); }
     const reqId = `ap${++this.seq}-${Date.now().toString(36)}`;
-    return new Promise<boolean>((resolve) => {
+    return new Promise<ApprovalDecision>((resolve) => {
       const onAbort = () => this.settle(reqId, false, 'cancelled');
       opts.signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(reqId, { resolve, onViewDiff: opts.onViewDiff, cleanup: () => opts.signal?.removeEventListener('abort', onAbort) });
@@ -35,12 +43,15 @@ export class ApprovalBroker {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handle(m: any): boolean {
     if (m?.type === 'approvalResponse' && typeof m.reqId === 'string') {
-      this.settle(m.reqId, m.decision === 'approve', m.decision === 'approve' ? 'approved' : 'denied');
+      const ok = m.decision === 'approve';
+      const selected = ok && Array.isArray(m.selected) ? m.selected.filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < 1000) as number[] : undefined;
+      if (ok && selected && !selected.length) { this.settle(m.reqId, false, 'denied'); return true; }
+      this.settle(m.reqId, ok, ok ? 'approved' : 'denied', selected);
       return true;
     }
     if (m?.type === 'approvalViewDiff' && typeof m.reqId === 'string') {
       const p = this.pending.get(m.reqId);
-      if (p?.onViewDiff) { void Promise.resolve(p.onViewDiff()).catch(() => undefined); }
+      if (p?.onViewDiff) { void Promise.resolve(p.onViewDiff(Number.isInteger(m.index) ? m.index : undefined)).catch(() => undefined); }
       return true;
     }
     return false;
@@ -51,17 +62,17 @@ export class ApprovalBroker {
     for (const id of [...this.pending.keys()]) { this.settle(id, false, reason); }
   }
 
-  private settle(reqId: string, ok: boolean, state: string) {
+  private settle(reqId: string, ok: boolean, state: string, selected?: number[]) {
     const p = this.pending.get(reqId);
     if (!p) { return; }
     this.pending.delete(reqId);
     p.cleanup();
     this.post({ type: 'approvalResolved', reqId, state });
-    p.resolve(ok);
+    p.resolve({ ok, selected: ok ? selected : undefined });
   }
 }
 
-type Approver = (req: ApprovalRequest, opts?: ApprovalOptions) => Promise<boolean>;
+type Approver = (req: ApprovalRequest, opts?: ApprovalOptions) => Promise<ApprovalDecision>;
 let approver: Approver | undefined;
 
 /** Registered by the chat view. */
@@ -69,7 +80,10 @@ export function setApprover(a: Approver | undefined): void { approver = a; }
 
 /** Ask the user in chat. With no chat available this denies (nothing runs without an explicit Approve). */
 export function requestApproval(req: ApprovalRequest, opts?: ApprovalOptions): Promise<boolean> {
-  return approver ? approver(req, opts) : Promise.resolve(false);
+  return requestDecision(req, opts).then(d => d.ok);
+}
+export function requestDecision(req: ApprovalRequest, opts?: ApprovalOptions): Promise<ApprovalDecision> {
+  return approver ? approver(req, opts) : Promise.resolve({ ok: false });
 }
 
 /** Rough added/removed line counts for the card summary (multiset line diff). */

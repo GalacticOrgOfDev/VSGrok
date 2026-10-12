@@ -21,6 +21,9 @@ async function main() {
   // Copy the fixture so the index/rules tests can't dirty the repo.
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'vsgrok-ws-'));
   fs.cpSync(path.join(root, 'test-int', 'fixture'), ws, { recursive: true });
+  // Headless Linux has no OS trash (gio); WorkspaceEdit deletes would fail. Desktop users keep the default.
+  fs.mkdirSync(path.join(ws, '.vscode'), { recursive: true });
+  fs.writeFileSync(path.join(ws, '.vscode', 'settings.json'), JSON.stringify({ 'files.enableTrash': false }));
   // Symlinks: one escaping the workspace, one pointing at the fixture's .env.
   const outside = path.join(os.tmpdir(), `vsgrok-outside-${process.pid}.txt`);
   fs.writeFileSync(outside, 'outside-secret-kangaroo');

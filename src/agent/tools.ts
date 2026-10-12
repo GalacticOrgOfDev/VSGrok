@@ -7,6 +7,8 @@ import { requestApproval } from './approvals';
 import { isSecretPath } from '../index/lexical';
 import { diag } from '../diagnostics';
 import { checkReadable } from '../security';
+import { getProblemsTool, runTestsTool } from './checks';
+import { proposePlan } from '../planApply';
 import { workspaceIndex } from '../index/workspaceIndex';
 
 function toSignal(token: vscode.CancellationToken): AbortSignal {
@@ -20,6 +22,7 @@ const MAX_READ = 1_000_000;
 
 /** Read-only tools: always offered in chat. */
 export const READ_TOOL_SPECS: ToolSpec[] = [
+  { type: 'function', function: { name: 'get_problems', description: 'Current diagnostics from VS Code\'s Problems panel (compiler, linter, type checker), errors first. Filter by workspace-relative path (file or folder) and minimum severity. Use after edits to check for breakage.', parameters: { type: 'object', properties: { path: { type: 'string' }, severity: { type: 'string', enum: ['error', 'warning', 'info', 'hint'], description: 'Minimum severity (default warning)' }, max: { type: 'number' } } } } },
   { type: 'function', function: { name: 'find_relevant_files', description: 'Find the files most relevant to a task or question using the local workspace index (BM25 over file paths, symbol names and contents). Returns ranked paths with matching lines and symbol outlines. Use this first for "where is X handled", "how does Y work" or before editing an unfamiliar area, then read_file the top hits.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Natural-language or identifier query' }, max: { type: 'number', description: 'Max files (default 10, max 30)' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'get_workspace_overview', description: 'Overview of the open VS Code workspace: folder name(s), top-level tree, package.json / README summary, open editors, active file, git branch and status. Call this first when asked about "the workspace" or "this project".', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'read_file', description: 'Read a UTF-8 text file in the workspace.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative path' } }, required: ['path'] } } },
@@ -29,6 +32,8 @@ export const READ_TOOL_SPECS: ToolSpec[] = [
 
 /** Write tools: offered only when Agent is on; each still needs the user's Accept/confirm. */
 export const WRITE_TOOL_SPECS: ToolSpec[] = [
+  { type: 'function', function: { name: 'propose_plan', description: 'Propose a multi-file change as ONE plan the user reviews on a single card (per-file diffs and checkboxes) and can undo in one click. Use this whenever a change touches more than one file. ops: create (new file, content required), modify (full new content), delete, rename (newPath, optional new content). Returns which files were applied.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'One-line description of the plan' }, changes: { type: 'array', items: { type: 'object', properties: { op: { type: 'string', enum: ['create', 'modify', 'delete', 'rename'] }, path: { type: 'string' }, newPath: { type: 'string' }, content: { type: 'string' } }, required: ['op', 'path'] } } }, required: ['changes'] } } },
+  { type: 'function', function: { name: 'run_tests', description: 'Detect and run the project\'s test command (package.json test script, pytest, go test, cargo test, or the vsgrok.testCommand setting). The user approves the command first. Returns exit code, parsed failures with file:line, and the output tail.', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'propose_edit', description: 'Propose full new contents for a file (new or existing). The user sees a diff and must Accept; returns whether it was applied.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, reason: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function', function: { name: 'run_command', description: 'Run a shell command in the workspace root. The user must confirm first. Returns exit code and output.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
 ];
@@ -63,7 +68,7 @@ async function readText(uri: vscode.Uri): Promise<string> {
   return text.length > MAX_READ ? text.slice(0, MAX_READ) + `\n…[truncated at ${MAX_READ} chars]` : text;
 }
 
-async function runCommand(command: string, token: vscode.CancellationToken): Promise<string> {
+export async function runCommand(command: string, token: vscode.CancellationToken): Promise<string> {
   const ok = await requestApproval({ kind: 'command', command }, { signal: toSignal(token) });
   if (!ok) { return 'User declined to run the command.'; }
   const cp = await import('child_process');
@@ -142,6 +147,9 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
   try {
     switch (name) {
       case 'get_workspace_overview': return await workspaceOverview(token);
+      case 'get_problems': return getProblemsTool(args);
+      case 'run_tests': return await runTestsTool(runCommand, token);
+      case 'propose_plan': return await proposePlan(args, toSignal(token));
       case 'find_relevant_files': return await workspaceIndex.findRelevant(String(args.query ?? ''), Number(args.max) || 10, token);
       case 'read_file': {
         if (isSecretPath(String(args.path))) { return `Refused: ${args.path} looks like a secrets/credentials file (.env, keys, tokens). VSGrok never reads these.`; }

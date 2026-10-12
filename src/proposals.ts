@@ -59,3 +59,13 @@ export async function proposeRangeEdit(doc: vscode.TextDocument, range: vscode.R
   const next = full.slice(0, doc.offsetAt(range.start)) + replacement + full.slice(doc.offsetAt(range.end));
   return proposeEdit(doc.uri, next, reason, signal);
 }
+
+/** Open a read-only diff of two in-memory texts (plan cards' View diff). */
+export async function showVirtualDiff(rel: string, oldText: string, newText: string, op = 'modify') {
+  const id = ++counter;
+  const left = vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `old=${id}` });
+  const right = vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `new=${id}` });
+  provider.contents.set(left.toString(), oldText);
+  provider.contents.set(right.toString(), newText);
+  await vscode.commands.executeCommand('vscode.diff', left, right, `${rel} ↔ Grok plan (${op})`, { preview: true, preserveFocus: true });
+}

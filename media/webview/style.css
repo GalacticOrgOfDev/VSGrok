@@ -228,3 +228,18 @@ body.vscode-high-contrast .rules-chip,body.vscode-high-contrast-light .rules-chi
 .header-left .brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @container (max-width:260px){.header-left .brand-sub{display:none}}
 .chip.refused{border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));color:var(--vscode-errorForeground);cursor:default}
+.plan-files{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px}
+.plan-file{display:flex;align-items:center;gap:6px;min-width:0}
+.plan-path{flex:1;min-width:0;display:flex;gap:5px;font-family:var(--vscode-editor-font-family);overflow-wrap:anywhere;cursor:pointer}
+.plan-op{width:1.2em;text-align:center;flex-shrink:0}
+.plan-delta{font-family:var(--vscode-editor-font-family);font-size:11px;color:var(--vscode-descriptionForeground);white-space:nowrap}
+.plan-diff{background:none;border:none;padding:0 2px;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px;white-space:nowrap}
+.plan-diff:hover{text-decoration:underline}
+.plan-done .plan-files li,.checks-offer .plan-files li{font-family:var(--vscode-editor-font-family);font-size:11px;color:var(--vscode-descriptionForeground)}
+.checks-offer .plan-files li{font-family:inherit}
+.chip.problems-chip{cursor:pointer;border:1px solid var(--vscode-editorWarning-foreground,var(--vscode-focusBorder))}
+.chip.problems-chip.off{opacity:.6;border-style:dashed}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-delta{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-diff{color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .chip.problems-chip{border-color:rgba(255,210,122,.55)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .plan-file input{accent-color:var(--g-cyan)}

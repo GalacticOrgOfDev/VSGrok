@@ -72,7 +72,7 @@ test('approval: View diff calls the hook without deciding', async () => {
 test('approval: with no chat approver registered, requests are denied', async () => {
   setApprover(undefined);
   assert.equal(await requestApproval({ kind: 'command', command: 'ls' }), false);
-  setApprover(async () => true);
+  setApprover(async () => ({ ok: true }));
   assert.equal(await requestApproval({ kind: 'command', command: 'ls' }), true);
   setApprover(undefined);
 });

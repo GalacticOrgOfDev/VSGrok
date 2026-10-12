@@ -11,6 +11,8 @@ import { ApprovalBroker, setApprover } from './agent/approvals';
 import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
 import { checkReadable } from './security';
+import { problemsContext } from './agent/checks';
+import { onPlanApplied, undoPlan } from './planApply';
 import { isSecretPath } from './index/lexical';
 import { RulesWatcher, rulesPrompt } from './rules';
 import { setBusy } from './status';
@@ -22,7 +24,7 @@ const MAX_HISTORY_CHAT = 200;
 export const SYSTEM_PROMPT =
   'You are Grok, built by xAI, running inside VS Code through the VSGrok extension as a coding agent. ' +
   'You are connected to the user\'s open workspace through tools: find_relevant_files (ranked files from a local index), get_workspace_overview, list_files, read_file and search_workspace are always available and run instantly without asking the user. ' +
-  'When a question involves the user\'s code, project, files or "the workspace", call these tools in this same turn and answer from what they return; for "where/how" questions start with find_relevant_files. Files like .env and credentials are never readable. ' +
+  'When a question involves the user\'s code, project, files or "the workspace", call these tools in this same turn and answer from what they return; get_problems shows current compiler/linter errors; for "where/how" questions start with find_relevant_files. Files like .env and credentials are never readable. ' +
   'Never announce an action ("I\'ll take a look", "Let me check") without making the tool call in the same response, and never end your turn promising to do something later. ' +
   'Either call a tool now or give your final answer. Keep going, calling tools as many times as needed, until you can answer. ' +
   'Be accurate and concise. Always use fenced code blocks with a language tag. ' +
@@ -30,7 +32,7 @@ export const SYSTEM_PROMPT =
   'Never claim to have changed files unless a tool result says the edit was applied.';
 
 const AGENT_PROMPT =
-  ' Agent mode is on: you can also call propose_edit and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
+  ' Agent mode is on: you can also call propose_plan (preferred for changes to more than one file), propose_edit, run_tests and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
   'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.';
 
 const NO_AGENT_PROMPT =
@@ -69,6 +71,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** In-chat Approve/Deny cards for commands and edits. */
   private approvals = new ApprovalBroker((m) => this.post(m));
   readonly rules = new RulesWatcher();
+  /** Include Problems for the active + attached files in each message (chip toggle). */
+  private problemsEnabled = true;
+  private problemsTimer?: NodeJS.Timeout;
+  private editedThisTurn = false;
   /** Hash of the project rules the current Responses chain was started/updated with. */
   private rulesHash?: string;
 
@@ -80,15 +86,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       { dispose: () => { this.approvals.cancelAll('cancelled'); setApprover(undefined); setErrorSink(undefined); } },
       this.rules,
       this.rules.onDidChange(() => this.pushRules()),
+      vscode.languages.onDidChangeDiagnostics(() => this.schedulePushProblems()),
+      vscode.window.onDidChangeActiveTextEditor(() => this.schedulePushProblems()),
+      { dispose: () => onPlanApplied(undefined) },
     );
     this.rules.start();
+    onPlanApplied((e) => { this.editedThisTurn = true; this.post({ type: 'planApplied', planId: e.planId, paths: e.paths, summary: e.summary }); });
     setErrorSink((c) => { void this.showCard('errorCard', c); });
     setApprover(async (req, opts) => {
       if (!this.view) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); }
       else if (!this.view.visible) { this.view.show(true); }
       await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
-      if (!this.ready) { return false; }
-      return this.approvals.request(req, opts);
+      if (!this.ready) { return { ok: false }; }
+      return this.approvals.requestDecision(req, opts);
     });
   }
 
@@ -161,6 +171,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (f) { await vscode.window.showTextDocument(vscode.Uri.joinPath(root, f), { preview: true }); }
   }
 
+  /** After agent edits, offer to re-run problems/tests (one card per turn). */
+  private offerChecks(force = false) {
+    if (!this.editedThisTurn && !force) { return; }
+    this.editedThisTurn = false;
+    this.post({ type: 'checksOffer' });
+  }
+
   private pushRules() {
     const r = this.rules.current;
     this.post({ type: 'rules', files: r?.files ?? [], truncated: !!r?.truncated });
@@ -187,7 +204,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'ready': {
         this.ready = true;
         this.approvals.cancelAll('panel reloaded');
-        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); void this.pushKeyState(); void this.pushModels();
+        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); this.pushProblems(); void this.pushKeyState(); void this.pushModels();
         this.readyWaiters.splice(0).forEach(r => r());
         this.onViewReady?.();
         break;
@@ -227,6 +244,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'copyMessage': break;
+      case 'toggleProblems': this.problemsEnabled = !this.problemsEnabled; this.pushProblems(); break;
+      case 'undoPlan': if (typeof m.planId === 'string') { const r = await undoPlan(m.planId); this.post({ type: 'planUndone', planId: m.planId, ...r }); if (r.ok) { this.offerChecks(true); } } break;
+      case 'rerunChecks': await this.injectQuery('Re-run the checks for the files you just changed: call get_problems for them and run_tests, then fix anything that broke (use propose_plan for multi-file fixes).', { agent: true }); break;
       case 'copyDiagnostics': await vscode.commands.executeCommand('vsgrok.copyDiagnostics'); break;
       case 'openRules': await this.openRules(); break;
       case 'openSettings': {
@@ -287,6 +307,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const chips = this.contexts.map(c => this.chipOf(c));
     if (this.implicitSel) { chips.push(this.chipOf(this.implicitSel)); }
     this.post({ type: 'contextUpdate', chips });
+    this.schedulePushProblems();
+  }
+
+  private problemUris(attached?: ContextItem[]): vscode.Uri[] {
+    const list = (attached ?? [...this.contexts, ...(this.implicitSel ? [this.implicitSel] : [])]).filter(c => c.kind !== 'folder').map(c => c.uri);
+    const ed = vscode.window.activeTextEditor;
+    if (ed && vscode.workspace.getWorkspaceFolder(ed.document.uri)) { list.push(ed.document.uri); }
+    return list;
+  }
+  private schedulePushProblems() {
+    if (this.problemsTimer) { clearTimeout(this.problemsTimer); }
+    this.problemsTimer = setTimeout(() => this.pushProblems(), 300);
+  }
+  private pushProblems() {
+    const { count } = problemsContext(this.problemUris());
+    this.post({ type: 'problemsState', count, enabled: this.problemsEnabled });
   }
 
   async addFileContext(uri: vscode.Uri, range?: vscode.Range) {
@@ -378,8 +414,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.contexts = []; this.pushContexts();
     this.lastUser = { text, images };
     let full = await this.resolveTags(text);
-    const ctxText = await this.renderContext(attached);
+    let ctxText = await this.renderContext(attached);
+    if (this.problemsEnabled) { const pc = problemsContext(this.problemUris(attached)); if (pc.text) { ctxText = (ctxText ? ctxText + '\n\n' : '') + pc.text; } }
     if (ctxText) { full += '\n\n--- Attached context ---\n' + ctxText; }
+    this.editedThisTurn = false;
 
     this.abort = new AbortController();
     this.cts = new vscode.CancellationTokenSource();
@@ -475,7 +513,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
             return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
           }
-          return executeTool(name, args, cts.token);
+          return executeTool(name, args, cts.token).then(r => { if (name === 'propose_edit' && /^Applied/.test(r)) { this.editedThisTurn = true; } return r; });
         },
         onToolStart: (call, args) => {
           const t = `t${++tid}`; ids.set(call.call_id, t);
@@ -489,6 +527,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       this.lastInputTokens = r.lastInputTokens;
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
+      this.offerChecks();
       this.post({ type: 'streamDone', id: aid, meta: {
         latencyMs: Date.now() - t0, completionTokens: r.outputTokens || undefined, cachedTokens: r.cachedTokens || undefined,
         reasoningTokens: r.reasoningTokens || undefined, inputTokens: r.lastInputTokens || undefined,
@@ -545,7 +584,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
             return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
           }
-          return executeTool(name, args, cts.token);
+          return executeTool(name, args, cts.token).then(r => { if (name === 'propose_edit' && /^Applied/.test(r)) { this.editedThisTurn = true; } return r; });
         },
         onToolStart: (call, args) => {
           const t = `t${++tid}`; ids.set(call.id, t);
@@ -558,6 +597,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         onStepEnd: (_s, res) => { if (res.toolCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); } },
       });
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
+      this.offerChecks();
       this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, cachedTokens: cached || undefined, reasoningTokens: reasoningTok || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;
@@ -604,6 +644,9 @@ export function toolLabel(name: string, a: unknown, done = false): string {
     case 'search_workspace': return `${done ? 'Searched' : 'Searching'} for "${s(o.query)}"`;
     case 'propose_edit': return `${done ? 'Proposed edit to' : 'Proposing edit to'} ${s(o.path)}`;
     case 'run_command': return `${done ? 'Ran' : 'Running'} \`${s(o.command)}\``;
+    case 'get_problems': return `${done ? 'Checked' : 'Checking'} problems${o.path ? ' in ' + s(o.path) : ''}`;
+    case 'run_tests': return done ? 'Ran the tests' : 'Running the tests…';
+    case 'propose_plan': return `${done ? 'Proposed' : 'Proposing'} a plan (${Array.isArray(o.changes) ? o.changes.length : '?'} files)`;
     default: return `${name}`;
   }
 }

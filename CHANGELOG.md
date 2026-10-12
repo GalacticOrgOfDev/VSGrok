@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.0 — 2026-10-12
+**Multi-file edit plans**
+- New `propose_plan` agent tool: create / modify / delete / rename up to 50 files in one in-chat **plan card**. Each file shows its op, +/− line counts, a **View diff** link and a checkbox; **Approve selected (n/N)** or **Deny**.
+- The approved subset is applied as one atomic `WorkspaceEdit`. A **Plan applied** card offers **Undo plan** (reverts the whole plan in one step; it refuses if any file changed since) and **Re-run checks**.
+- The secret filter and workspace-only rules apply to every path and rename target. Refused items are listed and never applied.
+
+**Diagnostics awareness**
+- New `get_problems` tool (VS Code diagnostics, filterable by file and severity, capped).
+- Problems in the active and attached files are sent with your message automatically. A **⚠ N problems** chip shows this; click it to turn it off or on.
+- New `run_tests` tool: detects the test command (package.json scripts with npm/pnpm/yarn/bun, pytest, `go test`, `cargo test`, or the new `vsgrok.testCommand` setting). It runs through the command approval card and parses failures into file:line (pytest, go, cargo, jest/vitest, node:test).
+- After the agent edits files, the chat offers **Re-run checks**.
+
+**Right-click commands** (editor context menu and Command Palette)
+- **VSGrok: Explain This**, **Write Tests for This**, **Fix Problems Here** and **Refactor…** work on the selection, or else the enclosing function/class (from the language server's symbols), and send it to the chat as context.
+- Write Tests uses the detected framework and the project's test location, and proposes the files through a plan card.
+- Fix Problems Here includes the diagnostics in range.
+- Refactor asks for a goal (presets or free text).
+
+**Other**
+- If a plan or undo fails while deleting because the OS trash is unavailable, the message now points to `files.enableTrash`.
+
 ## 0.6.2 — 2026-10-12
 **Fix: "Update failed: undefined" (self-update).** Root cause, reproduced against the real GitHub release in VS Code 1.141: the `.vsix` was saved under `globalStorageUri`, which on current desktop builds uses the `vscode-userdata:` scheme. VS Code's VSIX installer only accepts `file:`/`vscode-remote:` URIs and rejects others with the bare string `"No Servers"` (not an Error), so `err.message` was `undefined`. Now:
 - the download goes to a `file:` folder (global storage when it is `file:`, else the OS temp dir);

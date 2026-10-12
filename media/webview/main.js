@@ -109,7 +109,14 @@
   function renderChips() {
     chipsEl.innerHTML = '';
     const list = state.chips;
-    chipsEl.hidden = list.length === 0;
+    const pv = VSGrokCards.problemsChip(state.problems ? state.problems.count : 0, state.problems ? state.problems.enabled : true);
+    chipsEl.hidden = list.length === 0 && pv.hidden;
+    if (!pv.hidden) {
+      const pc = document.createElement('button'); pc.type = 'button'; pc.className = 'chip problems-chip' + (state.problems.enabled ? '' : ' off');
+      pc.textContent = pv.text; pc.title = pv.tooltip; pc.setAttribute('aria-pressed', String(state.problems.enabled));
+      pc.addEventListener('click', () => vscode.postMessage({ type: 'toggleProblems' }));
+      chipsEl.appendChild(pc);
+    }
     const shown = state.chipsExpanded ? list : list.slice(0, 4);
     shown.forEach((c) => chipsEl.appendChild(chipEl(c, true)));
     if (list.length > 4) {
@@ -267,8 +274,61 @@
 
   // In-chat approval cards (commands, edits). Text only via textContent; decision goes back with reqId.
   const approvalCards = new Map();
+  function addPlanCard(reqId, r) {
+    const wasNear = nearBottom();
+    const v = VSGrokCards.planSpec(r);
+    const card = document.createElement('div'); card.className = 'approval-card plan-card'; card.dataset.kind = 'plan'; card.setAttribute('role', 'group'); card.setAttribute('aria-label', v.title);
+    const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = v.title; card.appendChild(head);
+    if (v.summary) { const sm = document.createElement('div'); sm.className = 'approval-meta'; sm.textContent = v.summary; card.appendChild(sm); }
+    const list = document.createElement('ul'); list.className = 'plan-files';
+    const boxes = [];
+    for (const f of v.files) {
+      const li = document.createElement('li'); li.className = 'plan-file';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = reqId + '-f' + f.index; boxes.push(cb);
+      const lab = document.createElement('label'); lab.htmlFor = cb.id; lab.className = 'plan-path';
+      const op = document.createElement('span'); op.className = 'plan-op'; op.textContent = f.icon; op.title = f.opLabel; op.setAttribute('aria-label', f.opLabel);
+      const pt = document.createElement('span'); pt.textContent = f.path;
+      lab.append(op, pt);
+      const dl = document.createElement('span'); dl.className = 'plan-delta'; dl.textContent = f.delta;
+      const vd = document.createElement('button'); vd.type = 'button'; vd.className = 'plan-diff'; vd.textContent = 'View diff'; vd.setAttribute('aria-label', 'View diff for ' + f.path);
+      vd.addEventListener('click', () => vscode.postMessage({ type: 'approvalViewDiff', reqId, index: f.index }));
+      li.append(cb, lab, dl, vd); list.appendChild(li);
+    }
+    card.appendChild(list);
+    const actions = document.createElement('div'); actions.className = 'approval-actions';
+    const ok = document.createElement('button'); ok.className = 'approval-btn approve';
+    const deny = document.createElement('button'); deny.className = 'approval-btn deny'; deny.textContent = 'Deny';
+    const sync = () => { const n = boxes.filter(b => b.checked).length; ok.textContent = VSGrokCards.approveLabel(n, boxes.length); ok.disabled = n === 0; };
+    boxes.forEach(b => b.addEventListener('change', sync)); sync();
+    const decide = (decision) => { card.classList.add('pending'); card.querySelectorAll('button,input').forEach(b => (b.disabled = true));
+      vscode.postMessage({ type: 'approvalResponse', reqId, decision, selected: boxes.map((b, i) => b.checked ? i : -1).filter(i => i >= 0) }); };
+    ok.addEventListener('click', () => decide('approve')); deny.addEventListener('click', () => decide('deny'));
+    actions.append(ok, deny); card.appendChild(actions);
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    const t = state.streaming ? turns.get(state.streaming) : null;
+    (t && t.tools ? t.tools : messagesEl).appendChild(card);
+    approvalCards.set(reqId, card);
+    stick(wasNear); ok.focus({ preventScroll: true });
+    announce.textContent = 'Approval needed: ' + v.title;
+  }
+  function infoCard(cls, title, lines, buttons) {
+    const wasNear = nearBottom();
+    const card = document.createElement('div'); card.className = 'approval-card ' + cls; card.setAttribute('role', 'group'); card.setAttribute('aria-label', title);
+    const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = title; card.appendChild(head);
+    if (lines && lines.length) { const ul = document.createElement('ul'); ul.className = 'plan-files'; for (const l of lines.slice(0, 50)) { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); } card.appendChild(ul); }
+    const actions = document.createElement('div'); actions.className = 'approval-actions';
+    for (const b of buttons) { const x = document.createElement('button'); x.className = 'approval-btn ' + (b.primary ? 'approve' : 'deny'); x.textContent = b.label; x.addEventListener('click', () => b.fn(x, card)); actions.appendChild(x); }
+    card.appendChild(actions);
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    const t = state.streaming ? turns.get(state.streaming) : null;
+    (t && t.tools ? t.tools : messagesEl).appendChild(card); stick(wasNear);
+    return card;
+  }
+  const planCards = new Map();
+
   function addApprovalCard(reqId, r) {
     if (!r || approvalCards.has(reqId)) { return; }
+    if (r.kind === 'plan') { addPlanCard(reqId, r); return; }
     const wasNear = nearBottom();
     const card = document.createElement('div'); card.className = 'approval-card'; card.dataset.kind = r.kind === 'command' ? 'command' : 'edit';
     card.setAttribute('role', 'group');
@@ -425,6 +485,29 @@
         c.textContent = '⛔ Refused ' + String(m.path || 'file') + (m.reason ? ': ' + String(m.reason) : '');
         box.appendChild(c); setTimeout(() => c.remove(), 6000); break;
       }
+      case 'planApplied': {
+        const pid = String(m.planId);
+        const card = infoCard('plan-done', '✓ Plan applied' + (m.summary ? ' · ' + String(m.summary) : ''), (m.paths || []).map(String), [
+          { label: 'Undo plan', primary: false, fn: (b) => { b.disabled = true; vscode.postMessage({ type: 'undoPlan', planId: pid }); } },
+          { label: 'Re-run checks', primary: true, fn: (b) => { b.disabled = true; vscode.postMessage({ type: 'rerunChecks' }); } },
+        ]);
+        card.dataset.planId = pid; planCards.set(pid, card); break;
+      }
+      case 'planUndone': {
+        const card = planCards.get(String(m.planId)); if (!card) { break; }
+        card.querySelector('.approval-status').textContent = (m.ok ? '↶ ' : '✕ ') + String(m.msg || '');
+        if (m.ok) { card.dataset.state = 'denied'; const u = [...card.querySelectorAll('button')].find(b => b.textContent === 'Undo plan'); if (u) { u.remove(); } }
+        else { card.querySelectorAll('button').forEach(b => { if (b.textContent === 'Undo plan') { b.disabled = false; } }); }
+        break;
+      }
+      case 'checksOffer': {
+        infoCard('checks-offer', '🧪 Re-run the checks?', ['Grok changed files in this turn. Check Problems and run the tests?'], [
+          { label: 'Re-run checks', primary: true, fn: (b, c) => { b.disabled = true; vscode.postMessage({ type: 'rerunChecks' }); c.querySelector('.approval-status').textContent = 'Asked Grok to re-run the checks.'; } },
+          { label: 'Dismiss', primary: false, fn: (_b, c) => c.remove() },
+        ]);
+        break;
+      }
+      case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
       case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }
