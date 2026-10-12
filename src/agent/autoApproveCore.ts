@@ -43,6 +43,7 @@ export function autoDecision(req: ApprovalRequest, ctx: AutoContext): { auto: bo
       return { auto: true, why: `${req.files.length} file(s), creates/edits only` };
     }
     case 'command':
+      if (readsCredentials(req.command)) { return { auto: false, why: 'reads stored credentials' }; }
       if (ctx.level !== 'editsAndCommands') { return { auto: false, why: 'commands need approval at this level' }; }
       if (!commandAllowed(req.command, ctx.allowlist)) { return { auto: false, why: 'command not on the allowlist' }; }
       if (ctx.execDirty) { return { auto: false, why: 'first command after auto-approved edits to files the tests run' }; }
@@ -55,5 +56,28 @@ export function autoDecision(req: ApprovalRequest, ctx: AutoContext): { auto: bo
 export function budgetExceeded(spent: { tokens: number; costUsd?: number }, limits: { maxTokens: number; maxCostUsd: number }): string | undefined {
   if (limits.maxTokens > 0 && spent.tokens >= limits.maxTokens) { return `token budget of ${limits.maxTokens.toLocaleString('en-US')} reached`; }
   if (limits.maxCostUsd > 0 && spent.costUsd !== undefined && spent.costUsd >= limits.maxCostUsd) { return `cost budget of $${limits.maxCostUsd.toFixed(2)} reached`; }
+  return undefined;
+}
+
+/**
+ * Commands that read stored credentials (tokens, passwords, keys). Flagged in red on the command card and never
+ * auto-approved. Returns a short description, or undefined. Heuristic; the card is still the user's decision.
+ */
+const CRED_PATTERNS: [RegExp, string][] = [
+  [/\bgit(?:\.exe)?(?:\s+-[cC]\s+\S+|\s+--[\w-]+(?:=\S+)?)*\s+credential(?:-[\w-]+)?\s+(?:[^|;&\n]*\s)?(?:fill|get)\b/i, 'git credential helper (stored Git passwords/tokens)'],
+  [/\bgit-credential-[\w-]+(?:\.exe)?\s+(?:get|fill)\b/i, 'git credential helper (stored Git passwords/tokens)'],
+  [/\bgh(?:\.exe)?\s+auth\s+(?:token\b|status\b[^|;&\n]*(?:--show-token|-t\b))/i, 'GitHub CLI token'],
+  [/\bsecurity\s+find-(?:generic|internet)-password\b/i, 'macOS Keychain password'],
+  [/\b(?:cmdkey(?:\.exe)?\s+\/list|vaultcmd|Get-StoredCredential|PasswordVault|CredRead|Get-Secret\b)/i, 'Windows Credential Manager'],
+  [/\bsecret-tool\s+lookup\b|\bkeyring\s+get\b|\bpass\s+show\b|\bop\s+(?:read|item\s+get)\b/i, 'system keyring / password manager'],
+  [/\b(?:gcloud\s+auth\s+(?:print-access-token|application-default\s+print-access-token)|az\s+account\s+get-access-token|aws\s+(?:configure\s+get|sts\s+get-session-token|ecr\s+get-login-password)|npm\s+token\s+list)\b/i, 'cloud / registry access token'],
+  [/(?:^|[\s"'(=])(?:~|\$HOME|%USERPROFILE%|\$env:USERPROFILE)?[\\/]?[^\s"']*(?:\.git-credentials|\.netrc|_netrc|\.npmrc|\.pypirc|\.aws[\\/]credentials|\.docker[\\/]config\.json|gh[\\/]hosts\.ya?ml|\.ssh[\\/]id_[\w-]+(?!\.pub\b))(?=$|[\s"')])/i, 'credential file'],
+  [/\b(?:printenv|echo|Write-(?:Host|Output))\b[^|;&\n]*(?:\$\{?|%|\$env:)?\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|_PAT)\w*/i, 'environment secret'],
+  [/\b(?:env|printenv|set|Get-ChildItem\s+env:|gci\s+env:|dir\s+env:)\s*(?:\|\s*(?:grep|findstr|Select-String|sls)\b[^|;&\n]*)(?:TOKEN|SECRET|PASSWORD|KEY|PAT)/i, 'environment secret'],
+  [/process\.env\.\w*(?:TOKEN|SECRET|PASSWORD|API_?KEY|_PAT)\w*|os\.environ(?:\.get)?\W+\w*(?:TOKEN|SECRET|PASSWORD|API_?KEY)/i, 'environment secret read by a script'],
+];
+export function readsCredentials(command: string): string | undefined {
+  const c = String(command ?? '');
+  for (const [re, what] of CRED_PATTERNS) { if (re.test(c)) { return what; } }
   return undefined;
 }

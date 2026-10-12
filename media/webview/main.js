@@ -753,6 +753,12 @@
     card.appendChild(head);
     if (r.kind === 'command') {
       const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.command || ''); card.appendChild(pre);
+      if (r.danger) {
+        card.classList.add('danger');
+        const dz = document.createElement('div'); dz.className = 'approval-danger'; dz.setAttribute('role', 'note'); dz.id = reqId + '-danger';
+        dz.textContent = '⛔ This command reads stored credentials (' + String(r.danger) + '). Grok should never need your tokens or passwords. For GitHub, use VSGrok: Connect GitHub instead.';
+        card.appendChild(dz); card.setAttribute('aria-describedby', dz.id);
+      }
       if (Array.isArray(r.runs) && r.runs.length) {
         const lab = document.createElement('div'); lab.className = 'approval-meta'; lab.textContent = 'This runs:'; card.appendChild(lab);
         const rp = document.createElement('pre'); rp.className = 'approval-cmd approval-runs'; rp.textContent = r.runs.map(String).join('\n'); card.appendChild(rp);
@@ -793,7 +799,7 @@
     };
     const runLabel = r.kind === 'command' || r.kind === 'mcp' ? 'Run' : 'Approve';
     const ok = mk(runLabel, 'approve', () => decide('approve'));
-    mk('Deny', 'deny', () => decide('deny'));
+    const denyBtn = mk('Deny', 'deny', () => decide('deny'));
     if (always) { always.addEventListener('change', () => { ok.textContent = always.checked ? 'Run & always allow' : runLabel; }); }
     if (r.kind === 'edit') { mk('View diff', 'diff', () => vscode.postMessage({ type: 'approvalViewDiff', reqId })); }
     card.appendChild(actions);
@@ -802,7 +808,7 @@
     (t ? itemSlot(t) : messagesEl).appendChild(card);
     approvalCards.set(reqId, card);
     stick(wasNear); revealCard(card);
-    ok.focus({ preventScroll: true });
+    (r.danger ? denyBtn : ok).focus({ preventScroll: true }); // credential reads: start on Deny
     announce.textContent = 'Approval needed: ' + head.textContent;
   }
   function resolveApprovalCard(reqId, st) {

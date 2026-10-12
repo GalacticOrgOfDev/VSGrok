@@ -14,6 +14,10 @@ async function main() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ tag_name: 'v99.0.0', html_url: base + '/rel', body: 'mock', draft: false, prerelease: false,
         assets: [{ name: 'vsgrok-99.0.0.vsix', browser_download_url: base + '/dl/vsgrok-99.0.0.vsix' }] }));
+    } else if (req.url === '/ghmcp/seen') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(ghSeen));
+    } else if (req.url === '/ghmcp/') {
+      void mockGh(req, res);
     } else if (req.url === '/mcp') {
       void mockMcp(req, res);
     } else if (req.url?.startsWith('/xai/')) {
@@ -29,6 +33,21 @@ async function main() {
     if (req.headers['x-test-auth'] !== 'ok') { res.writeHead(401); res.end(); return; }
     let body = ''; for await (const d of req) { body += d; }
     const server = build('http');
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
+  }
+  const ghSeen = { auth: [] as string[], toolsets: [] as string[], calls: [] as string[] };
+  async function mockGh(req: http.IncomingMessage, res: http.ServerResponse) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { build } = require(path.join(root, 'test-int', 'gh-mcp-mock.cjs'));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    ghSeen.auth.push(String(req.headers.authorization)); ghSeen.toolsets.push(String(req.headers['x-mcp-toolsets']));
+    if (req.headers.authorization !== 'Bearer ghp_TESTTOKEN0123456789abcdef') { res.writeHead(401); res.end(); return; }
+    let body = ''; for await (const d of req) { body += d; }
+    const server = build(ghSeen);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
     await server.connect(transport);

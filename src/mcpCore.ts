@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 
 export type McpServerConfig =
   | { name: string; source: 'settings' | 'workspace'; type: 'stdio'; command: string; args: string[]; env: Record<string, string>; cwd?: string; disabled?: boolean }
-  | { name: string; source: 'settings' | 'workspace'; type: 'http'; url: string; headers: Record<string, string>; disabled?: boolean };
+  | { name: string; source: 'settings' | 'workspace'; type: 'http'; url: string; headers: Record<string, string>; disabled?: boolean; preset?: 'github' };
 
 export const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
 export const MAX_SERVERS = 20;
@@ -81,7 +81,26 @@ export function functionName(server: string, tool: string, taken: Set<string>): 
   return n;
 }
 
-export interface McpToolInfo { name: string; description?: string; inputSchema?: unknown }
+export interface McpToolInfo { name: string; description?: string; inputSchema?: unknown; readOnly?: boolean }
+
+/** GitHub's official remote MCP server (github/github-mcp-server, docs/remote-server.md). */
+export const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/';
+export const GITHUB_DEFAULT_TOOLSETS = 'context,repos,issues,pull_requests';
+/** Scopes requested from VS Code's built-in GitHub sign-in: repo (incl. create/push), read:org (org repos), user:email. */
+export const GITHUB_SCOPES = ['repo', 'read:org', 'user:email'];
+/** Built-in GitHub preset. The token goes only into the Authorization header of requests to the GitHub URL. */
+export function githubPreset(token: string, o: { url?: string; toolsets?: string; readOnly?: boolean; name?: string } = {}): McpServerConfig {
+  const url = o.url && /^(?:https:\/\/|http:\/\/127\.0\.0\.1[:/])/.test(o.url) ? o.url : GITHUB_MCP_URL; // https, or loopback for tests
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'X-MCP-Toolsets': (o.toolsets || GITHUB_DEFAULT_TOOLSETS).replace(/[^\w,]/g, '') };
+  if (o.readOnly) { headers['X-MCP-Readonly'] = 'true'; }
+  return { name: o.name ?? 'github', source: 'settings', type: 'http', url, headers, preset: 'github' };
+}
+/** Hash of a config with the Authorization value left out (the token never reaches globalState, even hashed). */
+export function presetHash(s: McpServerConfig): string {
+  if (s.type !== 'http') { return configHash(s); }
+  const { Authorization: _a, ...rest } = s.headers; void _a;
+  return configHash({ ...s, headers: rest });
+}
 
 /** Responses-style function tool for an MCP tool. Server-provided text is marked as untrusted. */
 export const MAX_SCHEMA_CHARS = 8_000;

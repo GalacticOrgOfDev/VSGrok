@@ -11,6 +11,8 @@ import { virtualDiffCount } from './proposals';
 import { GrokInlineProvider } from './inline';
 import { registerInlineEdit } from './inlineEdit';
 import { McpManager, setMcpManager, WORKSPACE_FILE } from './mcp';
+import { GITHUB_SCOPES } from './mcpCore';
+const GITHUB_PAT_KEY = 'vsgrok.github.pat';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
 import { SECRET_KEY, DEFAULT_MODEL, cfg } from './config';
@@ -60,7 +62,38 @@ export function activate(context: vscode.ExtensionContext) {
   setMcpManager(mcpManager);
   context.subscriptions.push(mcpManager, { dispose: () => setMcpManager(undefined) });
   context.subscriptions.push(mcpManager.onDidChange(() => chat.pushMcp()));
+  // GitHub preset token: a PAT the user stored (SecretStorage) wins; otherwise VS Code's built-in GitHub sign-in, silently.
+  mcpManager.githubToken = async () => {
+    const pat = await context.secrets.get(GITHUB_PAT_KEY);
+    if (pat) { return pat; }
+    const s = await vscode.authentication.getSession('github', GITHUB_SCOPES, { silent: true }).then(x => x, () => undefined);
+    return s?.accessToken;
+  };
   void mcpManager.ready();
+  reg('vsgrok.connectGitHub', async () => {
+    const pick = await vscode.window.showQuickPick([
+      { label: '$(github) Sign in with GitHub', description: 'recommended · uses VS Code\'s GitHub account', id: 'session' },
+      { label: '$(key) Use a personal access token', description: 'stored in VS Code SecretStorage, never in settings', id: 'pat' },
+    ], { title: 'Connect GitHub to VSGrok (GitHub\'s official MCP server)' });
+    if (!pick) { return; }
+    if (pick.id === 'session') {
+      try { await vscode.authentication.getSession('github', GITHUB_SCOPES, { createIfNone: true }); } catch { return; }
+    } else {
+      const tok = await vscode.window.showInputBox({ title: 'GitHub personal access token', password: true, ignoreFocusOut: true, placeHolder: 'ghp_… or github_pat_…',
+        validateInput: v => /^(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}$/.test(v.trim()) ? undefined : 'That doesn\'t look like a GitHub token' });
+      if (!tok) { return; }
+      await context.secrets.store(GITHUB_PAT_KEY, tok.trim());
+    }
+    await vscode.workspace.getConfiguration('vsgrok').update('github.enabled', true, vscode.ConfigurationTarget.Global);
+    mcpManager.reload(); await mcpManager.ready();
+    chat.toastIfVisible('GitHub connected: Grok can read repos; anything that writes asks first.');
+  });
+  reg('vsgrok.disconnectGitHub', async () => {
+    await context.secrets.delete(GITHUB_PAT_KEY);
+    await vscode.workspace.getConfiguration('vsgrok').update('github.enabled', false, vscode.ConfigurationTarget.Global);
+    mcpManager.reload();
+    chat.toastIfVisible('GitHub disconnected. (Your VS Code GitHub sign-in is unchanged; sign out from the Accounts menu if you want.)');
+  });
   reg('vsgrok.mcpServers', async () => {
     await mcpManager.ready();
     const st = mcpManager.status();

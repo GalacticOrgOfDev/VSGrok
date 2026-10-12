@@ -47,7 +47,8 @@ export const DEMO_HINT =
   ' When the user asks to run or execute the demo, or to build the example/sample project, first call read_extension_doc with name "DEMO.md" and follow it step by step. All approvals stay in place.';
 const AGENT_PROMPT =
   ' Agent mode is on: you can also call propose_plan (preferred for changes to more than one file), propose_edit, run_tests and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
-  'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.' + DEMO_HINT;
+  'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end. ' +
+  'Never read stored credentials (git credential fill, gh auth token, keychains, credential files, token env vars) or use tokens in scripts. For GitHub actions such as creating a repository or a release, use the mcp__github__* tools when they are available; otherwise tell the user to run "VSGrok: Connect GitHub".' + DEMO_HINT;
 
 const TASK_PROMPT =
   'Update: background task mode. Work through the task on your own: (1) inspect the relevant files, (2) state a short plan as a checklist, ' +

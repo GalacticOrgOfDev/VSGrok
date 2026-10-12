@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.0 — 2026-10-12
+
+**GitHub connector**
+- **New: VSGrok: Connect GitHub.** Grok gets GitHub tools through GitHub's official remote MCP server (`https://api.githubcopilot.com/mcp/`), for example reading repos, issues and PRs, and creating repositories.
+  - Sign-in options: **Sign in with GitHub** (recommended) uses VS Code's built-in GitHub account, so there's no token to paste. Or **Use a personal access token**, which is stored in VS Code SecretStorage.
+  - The token never goes into settings, logs, the MCP status, the stored approval hashes, or requests to xAI. It goes only in the `Authorization` header to GitHub.
+  - Read tools (marked `readOnlyHint` by GitHub's server) run without a card. Anything that writes shows the usual MCP approval card.
+  - Settings: `vsgrok.github.enabled`, `.toolsets` (default `context,repos,issues,pull_requests`), `.readOnly`, `.mcpUrl`. They are user-level only, so a repository can't turn this on or redirect your token. **VSGrok: Disconnect GitHub** removes the stored token.
+- **Why VSGrok runs this itself instead of having xAI connect:** xAI's Responses API does support remote MCP tools (https://docs.x.ai/developers/tools/remote-mcp), but it documents no `require_approval`. Write tools would then run without your approval, and your GitHub token would pass through xAI. The GitHub connector at https://docs.x.ai/grok/connectors is a grok.com feature, not part of the API.
+
+**Security**
+- **Commands that read stored credentials get a red card and are never auto-approved,** even when allowlisted. Focus starts on Deny.
+  - Examples: `git credential fill`/`get`, credential helpers, `gh auth token`, `security find-*-password`, `cmdkey`, `Get-StoredCredential`, `secret-tool`, cloud CLI token commands, and reading `.git-credentials`, `.netrc`, `.npmrc`, `~/.aws/credentials`, `gh/hosts.yml`, or SSH private keys.
+  - Also printing `*TOKEN*` / `*KEY*` / `*SECRET*` / `*PASSWORD*` variables.
+- Grok's instructions now say never to read credentials, and to use the GitHub tools (or ask you to connect GitHub) for repository and release work.
+
+**Demo**
+- DEMO.md's `package.json` leaves `author` empty instead of hardcoding a name.
+
 ## 0.14.4 — 2026-10-12
 
 **Demo: commit-buddy**

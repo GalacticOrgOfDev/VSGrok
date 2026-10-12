@@ -42,6 +42,8 @@ Call `get_workspace_overview` in step 1.
 
 ## Files (copy exactly)
 
+`author` stays empty on purpose: never guess the user's name. They can fill it in later (for example from `git config user.name`).
+
 `<dir>/package.json`
 ````json
 {
@@ -58,7 +60,7 @@ Call `get_workspace_overview` in step 1.
     "node": ">=18"
   },
   "license": "MIT",
-  "author": "Timothy Payn",
+  "author": "",
   "files": [
     "bin",
     "src",

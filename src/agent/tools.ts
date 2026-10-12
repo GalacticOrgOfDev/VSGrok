@@ -1,3 +1,4 @@
+import { readsCredentials } from './autoApproveCore';
 // Agent tools. Read-only tools run directly; edits and commands need Approve on an in-chat card.
 import * as vscode from 'vscode';
 import { ToolSpec } from '../xai/client';
@@ -82,7 +83,9 @@ async function readText(uri: vscode.Uri): Promise<string> {
 
 export async function runCommand(command: string, token: vscode.CancellationToken, card: { runs?: string[]; source?: string; repoControlled?: boolean; cwd?: string } = {}): Promise<string> {
   const { cwd, ...shown } = card;
-  const ok = await requestApproval({ kind: 'command', command, ...shown, source: cwd ? `${shown.source ?? 'Grok'} · runs in ${cwd}/` : shown.source }, { signal: toSignal(token) });
+  const danger = readsCredentials(command);
+  if (danger) { diag('command.credentials', { what: danger }); }
+  const ok = await requestApproval({ kind: 'command', command, ...shown, source: cwd ? `${shown.source ?? 'Grok'} · runs in ${cwd}/` : shown.source, ...(danger ? { danger } : {}) }, { signal: toSignal(token) });
   if (!ok) { return 'User declined to run the command.'; }
   const cp = await import('child_process');
   return new Promise((resolve) => {

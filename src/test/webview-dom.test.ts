@@ -485,3 +485,13 @@ test('0.14.4: replay of the recorded demo e2e posts: every card lands at the bot
   const all = Array.from(d.getElementById('messages')!.children);
   assert.ok(all.findIndex(e => e.classList.contains('demo-start')) < all.indexOf(turn));
 });
+
+test('credential-reading command card is red, explains why, and focuses Deny', () => {
+  const { d, post } = boot();
+  post({ type: 'approvalRequest', reqId: 'cr', request: { kind: 'command', command: 'gh auth token', danger: 'GitHub CLI token' } });
+  const card = d.querySelector('.approval-card')!;
+  assert.ok(card.classList.contains('danger'));
+  const note = d.querySelector('.approval-danger')!;
+  assert.match(note.textContent!, /reads stored credentials/); assert.match(note.textContent!, /Connect GitHub/);
+  assert.equal((d.activeElement as HTMLElement).textContent, 'Deny');
+});

@@ -989,6 +989,77 @@ suite('VSGrok in VS Code', () => {
     });
   });
 
+  // ---------- 0.15.0: GitHub preset + credential commands ----------
+  test('0.15.0: GitHub MCP preset: token from provider as Bearer, reads run without a card, writes ask; token never leaks', async () => {
+    const xai = process.env.VSGROK_TEST_XAI!;
+    const base = xai.replace(/\/xai$/, '');
+    const TOKEN = 'ghp_TESTTOKEN0123456789abcdef';
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    const prev = api.mcp.githubToken;
+    // A repo can't turn the preset on: workspace value is ignored.
+    await c.update('github.enabled', true, vscode.ConfigurationTarget.Workspace).then(() => undefined, () => undefined);
+    api.mcp.githubToken = async () => TOKEN;
+    api.mcp.reload(); await api.mcp.ready();
+    assert.ok(!api.mcp.status().servers.some((x: { preset?: string }) => x.preset === 'github'), 'workspace setting must not enable GitHub');
+    await c.update('github.enabled', undefined, vscode.ConfigurationTarget.Workspace).then(() => undefined, () => undefined);
+    await c.update('github.mcpUrl', `${base}/ghmcp/`, vscode.ConfigurationTarget.Global);
+    await c.update('github.enabled', true, vscode.ConfigurationTarget.Global);
+    try {
+      api.mcp.reload(); await api.mcp.ready();
+      const st = api.mcp.status(); const gh = st.servers.find((x: { preset?: string }) => x.preset === 'github');
+      assert.ok(gh, JSON.stringify(st)); assert.strictEqual(gh.status, 'ready', JSON.stringify(st)); assert.strictEqual(gh.name, 'github');
+      assert.ok(!JSON.stringify(st).includes(TOKEN));
+      const seen = await (await fetch(base + '/ghmcp/seen')).json() as { auth: string[]; toolsets: string[]; calls: string[] };
+      assert.ok(seen.auth.every(a => a === 'Bearer ' + TOKEN)); assert.strictEqual(seen.toolsets[0], 'context,repos,issues,pull_requests');
+      await withMock('mock-text', async () => {
+        await api.chat.testReceive({ type: 'clearChat' }); await idle();
+        await api.chat.testReceive({ type: 'setAgent', enabled: true });
+        await rreply(xai, { output: [fcall(21, 'mcp__github__get_me', {})] });
+        await rreply(xai, { output: [fcall(22, 'mcp__github__create_repository', { name: 'demo' })] });
+        await rreply(xai, { text: 'done' });
+        const a0 = posts('approvalRequest').length; const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
+        const q = api.chat.testReceive({ type: 'query', text: 'make a repo' });
+        const card = await until(() => posts('approvalRequest')[a0]);
+        assert.deepStrictEqual({ server: card.request.server, tool: card.request.tool }, { server: 'github', tool: 'create_repository' }, 'the read tool ran without a card');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'approve' });
+        await q; await idle();
+        assert.strictEqual(posts('approvalRequest').length, a0 + 1);
+        const reqs = (await (await fetch(xai + '/requests')).json() as unknown[]).slice(r0);
+        const all = JSON.stringify(reqs);
+        assert.match(all, /octo-test/); assert.match(all, /created demo/);
+        assert.ok(!all.includes(TOKEN), 'token never sent to xAI');
+        assert.match(JSON.stringify((reqs[0] as { instructions?: string }).instructions ?? reqs[0]), /mcp__github__/);
+      });
+      const seen2 = await (await fetch(base + '/ghmcp/seen')).json() as { calls: string[] };
+      assert.deepStrictEqual(seen2.calls.slice(-2), ['get_me', 'create_repository']);
+      // Not signed in: clear error, no server.
+      api.mcp.githubToken = async () => undefined;
+      api.mcp.reload(); await api.mcp.ready();
+      assert.match(api.mcp.status().errors.join('\n'), /GitHub: not signed in.*Connect GitHub/);
+    } finally {
+      api.mcp.githubToken = prev;
+      await c.update('github.enabled', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('github.mcpUrl', undefined, vscode.ConfigurationTarget.Global);
+      api.mcp.reload(); await api.mcp.ready();
+    }
+  });
+
+  test('0.15.0: a command that reads credentials gets a red card and is never auto-approved', async () => {
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('agent.autoApprove', 'editsAndCommands', vscode.ConfigurationTarget.Global);
+    await c.update('agent.commandAllowlist', ['git credential fill'], vscode.ConfigurationTarget.Global);
+    try {
+      const n0 = posts('approvalRequest').length;
+      const run = vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_command', { command: 'printf "host=github.com\\n" | git credential fill' });
+      const card = await until(() => posts('approvalRequest')[n0]);
+      assert.strictEqual(card.request.kind, 'command'); assert.match(card.request.danger, /credential/);
+      await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'deny' }); await run;
+    } finally {
+      await c.update('agent.autoApprove', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('agent.commandAllowlist', undefined, vscode.ConfigurationTarget.Global);
+    }
+  });
+
   // ---------- 0.12.0: MCP ----------
   test('MCP: stdio + streamable HTTP servers, tools offered to Grok, approval card with Always allow, workspace file merge', async () => {
     const xai = process.env.VSGROK_TEST_XAI!;

@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 // Pure module (no vscode import) so it is unit-testable.
 
 export type ApprovalRequest =
-  | { kind: 'command'; title?: string; command: string; runs?: string[]; source?: string; repoControlled?: boolean }
+  | { kind: 'command'; title?: string; command: string; runs?: string[]; source?: string; repoControlled?: boolean; danger?: string }
   | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number; warn?: string }
   | { kind: 'mcp'; title?: string; server: string; tool: string; args: string; source?: 'settings' | 'workspace' }
   | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string; warn?: string }[] };

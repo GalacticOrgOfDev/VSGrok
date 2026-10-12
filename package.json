@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.14.4",
+  "version": "0.15.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -179,6 +179,16 @@
       {
         "command": "vsgrok.mcpServers",
         "title": "MCP Servers",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.connectGitHub",
+        "title": "Connect GitHub",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.disconnectGitHub",
+        "title": "Disconnect GitHub",
         "category": "VSGrok"
       },
       {
@@ -685,6 +695,30 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "When a terminal command fails (non-zero exit, via shell integration), show a subtle **Ask Grok** item in the status bar. One click sends the command, exit code and output tail to chat for a diagnosis and a proposed fix through the approval card. No notifications."
+        },
+        "vsgrok.github.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Give Grok GitHub tools through GitHub's official remote MCP server (`api.githubcopilot.com/mcp`). Use **VSGrok: Connect GitHub** to sign in. Read tools run directly; anything that writes (create repo, push files, issues, PRs) shows an approval card. The token comes from VS Code's GitHub sign-in or a PAT in SecretStorage, never from settings."
+        },
+        "vsgrok.github.readOnly": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Only offer GitHub's read tools (X-MCP-Readonly)."
+        },
+        "vsgrok.github.toolsets": {
+          "type": "string",
+          "default": "context,repos,issues,pull_requests",
+          "scope": "application",
+          "description": "GitHub MCP toolsets (X-MCP-Toolsets), comma-separated. Fewer toolsets = fewer tool definitions in Grok's context."
+        },
+        "vsgrok.github.mcpUrl": {
+          "type": "string",
+          "default": "https://api.githubcopilot.com/mcp/",
+          "scope": "application",
+          "description": "GitHub MCP server URL (https only; user settings only). Change only for GitHub Enterprise or testing."
         }
       }
     },

@@ -10,7 +10,10 @@ import { cfg } from './config';
 import { requestDecision } from './agent/approvals';
 import { diag } from './diagnostics';
 import { redact } from './diagLog';
-import { McpServerConfig, McpToolInfo, parseServers, mergeServers, configHash, functionName, toFunctionTool, formatResult, argsPreview, MAX_TOOLS_PER_SERVER } from './mcpCore';
+import { McpServerConfig, McpToolInfo, parseServers, mergeServers, configHash, functionName, toFunctionTool, formatResult, argsPreview, MAX_TOOLS_PER_SERVER, githubPreset, presetHash, GITHUB_MCP_URL } from './mcpCore';
+
+/** Supplies the GitHub token (VS Code GitHub sign-in or a PAT from SecretStorage). Replaced in tests. */
+export type GithubTokenProvider = () => Promise<string | undefined>;
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const CALL_TIMEOUT_MS = 120_000;
@@ -37,7 +40,7 @@ export class McpManager implements vscode.Disposable {
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.workspace.workspaceFolders?.[0] ?? '/', WORKSPACE_FILE));
     this.subs.push(this.emitter, watcher,
       watcher.onDidChange(() => this.reload()), watcher.onDidCreate(() => this.reload()), watcher.onDidDelete(() => this.reload()),
-      vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('vsgrok.mcp')) { this.reload(); } }),
+      vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('vsgrok.mcp') || e.affectsConfiguration('vsgrok.github')) { this.reload(); } }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.reload()),
     );
   }
@@ -104,13 +107,30 @@ export class McpManager implements vscode.Disposable {
   /** Start (or wait for) the initial load. */
   ready(): Promise<void> { if (!this.loading) { this.reload(); } return this.loading!; }
 
+  githubToken: GithubTokenProvider = async () => undefined;
+  /** GitHub preset settings: user (global) values only, so a repo can't enable it or redirect the token. */
+  githubSettings(): { enabled: boolean; url: string; toolsets?: string; readOnly: boolean } {
+    const g = <T>(k: string) => cfg().inspect<T>(k)?.globalValue;
+    return { enabled: g<boolean>('github.enabled') === true, url: g<string>('github.mcpUrl') || GITHUB_MCP_URL, toolsets: g<string>('github.toolsets'), readOnly: g<boolean>('github.readOnly') === true };
+  }
+
   private async doLoad(): Promise<void> {
     await this.closeAll();
     const { servers, errors, workspaceSkipped } = await this.readConfig();
     this.errors = [...errors, ...(workspaceSkipped ? ['Servers from this repo ignored: the workspace is not trusted'] : [])];
+    const gh = this.githubSettings();
+    if (gh.enabled) {
+      let tok: string | undefined;
+      try { tok = await this.githubToken(); } catch { tok = undefined; }
+      if (!tok) { this.errors.push('GitHub: not signed in. Run "VSGrok: Connect GitHub".'); }
+      else {
+        const name = servers.some(s => s.name === 'github') ? 'github-vsgrok' : 'github';
+        servers.unshift(githubPreset(tok, { url: gh.url, toolsets: gh.toolsets, readOnly: gh.readOnly, name }));
+      }
+    }
     const taken = new Set<string>();
     await Promise.all(servers.map(async s => {
-      const c: Conn = { cfg: s, hash: configHash(s), status: s.disabled ? 'disabled' : this.hasConsent(s) ? 'connecting' : 'needsConsent', tools: [] };
+      const c: Conn = { cfg: s, hash: s.type === 'http' && s.preset ? presetHash(s) : configHash(s), status: s.disabled ? 'disabled' : this.hasConsent(s) ? 'connecting' : 'needsConsent', tools: [] };
       this.conns.set(s.name, c);
       if (s.disabled || c.status === 'needsConsent') { return; }
       let transport: (StdioClientTransport | StreamableHTTPClientTransport) | undefined;
@@ -124,7 +144,7 @@ export class McpManager implements vscode.Disposable {
         await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connect to ${s.name}`);
         c.client = client;
         const list = await withTimeout(client.listTools(), CONNECT_TIMEOUT_MS, `list tools of ${s.name}`);
-        c.tools = (list.tools ?? []).slice(0, MAX_TOOLS_PER_SERVER).map(t => ({ fn: '', info: { name: t.name, description: t.description, inputSchema: t.inputSchema } }));
+        c.tools = (list.tools ?? []).slice(0, MAX_TOOLS_PER_SERVER).map(t => ({ fn: '', info: { name: t.name, description: t.description, inputSchema: t.inputSchema, readOnly: t.annotations?.readOnlyHint === true } }));
         c.status = 'ready';
       } catch (e) {
         c.status = 'error'; c.error = redact((e as Error).message).slice(0, 300);
@@ -152,7 +172,7 @@ export class McpManager implements vscode.Disposable {
   }
   isMcpTool(name: string) { return this.byFn.has(name); }
   status() {
-    return { errors: this.errors, servers: [...this.conns.values()].map(c => ({ name: c.cfg.name, type: c.cfg.type, source: c.cfg.source, status: c.status, error: c.error, tools: c.tools.map(t => t.info.name) })) };
+    return { errors: this.errors, servers: [...this.conns.values()].map(c => ({ name: c.cfg.name, type: c.cfg.type, source: c.cfg.source, preset: c.cfg.type === 'http' ? c.cfg.preset : undefined, status: c.status, error: c.error, tools: c.tools.map(t => t.info.name) })) };
   }
 
   private allowList(): string[] { return this.ctx.globalState.get<string[]>(ALLOW_KEY) ?? []; }
@@ -171,7 +191,9 @@ export class McpManager implements vscode.Disposable {
     try {
       const prev = argsPreview(args);
       if (prev.tooLarge) { return `Error: arguments for MCP ${m.server}/${m.tool} are too large to show for approval; call it with smaller arguments.`; }
-      if (!this.allowList().includes(key)) {
+      // GitHub preset: read-only tools (per the server's readOnlyHint) run without a card; anything that writes asks.
+      const presetRead = c.cfg.type === 'http' && c.cfg.preset === 'github' && c.tools.find(t => t.info.name === m.tool)?.info.readOnly === true;
+      if (!presetRead && !this.allowList().includes(key)) {
         const d = await requestDecision({ kind: 'mcp', server: m.server, tool: m.tool, args: prev.text, source: c.cfg.source }, { signal: ac.signal });
         if (!d.ok) { return `User declined the MCP tool call ${m.server}/${m.tool}.`; }
         if (d.always) { await this.ctx.globalState.update(ALLOW_KEY, [...new Set([...this.allowList(), key])].slice(-500)); }
