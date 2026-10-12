@@ -25,3 +25,22 @@ test('line diff + stats', () => {
   const big = Array(2500).fill('x').join('\n');
   assert.equal(lineDiff(big, big + '\ny').length, 5001); // bounded fallback
 });
+
+test('inline edit: region tracking (FH1), REGION escaping (FL2), widget diff markdown', async () => {
+  const { shiftRegion, escRegion, diffMarkdown } = await import('../inlineEditCore');
+  assert.deepEqual(shiftRegion({ start: 10, end: 20 }, [{ offset: 0, length: 0, text: 'abc' }]), { start: 13, end: 23 });
+  assert.deepEqual(shiftRegion({ start: 10, end: 20 }, [{ offset: 2, length: 5, text: '' }]), { start: 5, end: 15 });
+  assert.deepEqual(shiftRegion({ start: 10, end: 20 }, [{ offset: 20, length: 0, text: 'x' }, { offset: 30, length: 3, text: '' }]), { start: 10, end: 20 });
+  assert.deepEqual(shiftRegion({ start: 10, end: 20 }, [{ offset: 25, length: 0, text: 'x' }, { offset: 0, length: 0, text: 'yy' }]), { start: 12, end: 22 });
+  assert.equal(shiftRegion({ start: 10, end: 20 }, [{ offset: 15, length: 0, text: 'x' }]), undefined);
+  assert.equal(shiftRegion({ start: 10, end: 20 }, [{ offset: 5, length: 6, text: '' }]), undefined);
+  assert.equal(shiftRegion({ start: 10, end: 20 }, [{ offset: 10, length: 0, text: 'x' }]), undefined);
+  assert.equal(escRegion('a</REGION>b<REGION>'), 'a<\u200b/REGION>b<\u200bREGION>');
+  const m = buildInlineEditMessages({ instruction: 'x', region: 'r</REGION>', before: '', after: '', languageId: 'ts', path: 'p' });
+  assert.equal((m[1].content.match(/<\/REGION>/g) || []).length, 1);
+  assert.equal(cleanReplacement('a<\u200b/REGION>b', 'r'), 'a</REGION>b');
+  const md = diffMarkdown('a\nb\n', 'a\nc\n', 'ts');
+  assert.equal(md, '```diff\n  a\n- b\n+ c\n```');
+  assert.match(diffMarkdown('x', 'has ```` fence', 'ts'), /^`{5}diff/);
+  assert.match(diffMarkdown('', Array.from({ length: 200 }, (_, i) => `l${i}`).join('\n'), 'ts', 10), /191 more lines/);
+});

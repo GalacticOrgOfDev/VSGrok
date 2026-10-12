@@ -192,6 +192,11 @@
         "command": "vsgrok.askAboutTerminalFailure",
         "title": "Ask Grok About the Failed Terminal Command",
         "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.inlineEdit.viewDiff",
+        "title": "Inline Edit: View Diff",
+        "category": "VSGrok"
       }
     ],
     "menus": {
@@ -260,6 +265,10 @@
         },
         {
           "command": "vsgrok.inlineEdit.reject",
+          "when": "vsgrok.inlineEditActive"
+        },
+        {
+          "command": "vsgrok.inlineEdit.viewDiff",
           "when": "vsgrok.inlineEditActive"
         }
       ],

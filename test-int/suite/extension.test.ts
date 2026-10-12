@@ -552,7 +552,7 @@ suite('VSGrok in VS Code', () => {
   }
   const reply = (xai: string, text: string, toolCalls?: unknown[]) => fetch(xai + '/chatReply', { method: 'POST', body: JSON.stringify({ text, toolCalls }) });
 
-  test('inline edit: streams a replacement below the region, accept keeps it, reject restores, refine resends history, secrets refused', async () => {
+  test('inline edit: proposal in the widget (buffer untouched), region tracks edits, accept is one undo, reject is a no-op, refine resends history, secrets refused in-widget', async () => {
     await withMock('mock-text', async (xai) => {
       const root = vscode.workspace.workspaceFolders![0].uri;
       const f = vscode.Uri.joinPath(root, 'inline-target.ts');
@@ -565,9 +565,13 @@ suite('VSGrok in VS Code', () => {
       await reply(xai, '```ts\nfunction add(x: number, y: number): number {\n  return x + y;\n}\n```');
       await vscode.commands.executeCommand('vsgrok.inlineEdit', 'add types');
       await until(() => ie.state?.ready);
-      // Inline diff: old block still there, new block right below it.
-      assert.strictEqual(doc.getText(), 'const a = 1;\nfunction add(x, y) {\n  return x + y;\n}\nfunction add(x: number, y: number): number {\n  return x + y;\n}\nconst z = 3;\n');
-      assert.match(ie.lastStatus, /\+1 −1/);
+      // FH2: the proposal is rendered in the widget; the document is untouched (not dirty) until Accept.
+      assert.strictEqual(doc.getText(), 'const a = 1;\nfunction add(x, y) {\n  return x + y;\n}\nconst z = 3;\n');
+      assert.strictEqual(doc.isDirty, false);
+      assert.match(ie.lastStatus, /\+1 −1/); assert.match(ie.lastStatus, /```diff\n- function add\(x, y\) \{\n\+ function add\(x: number/); assert.match(ie.lastStatus, /(Ctrl|Cmd)\+Enter/);
+      // FH1: typing above the region shifts it; the result still lands in the right place.
+      const we0 = new vscode.WorkspaceEdit(); we0.insert(f, new vscode.Position(0, 0), '// top\n'); await vscode.workspace.applyEdit(we0);
+      assert.strictEqual(ie.active, true); assert.strictEqual(ie.state.start, 'const a = 1;\n// top\n'.length);
       const reqs = (await (await fetch(xai + '/chatRequests')).json()) as { messages: { role: string; content: string }[] }[];
       const sent = reqs[c0].messages.at(-1)!.content;
       assert.match(sent, /<REGION>function add\(x, y\) \{\n  return x \+ y;\n\}\n<\/REGION>const z/); assert.match(sent, /Instruction: add types/);
@@ -579,8 +583,18 @@ suite('VSGrok in VS Code', () => {
       const m2 = reqs2[c0 + 1].messages;
       assert.strictEqual(m2[2].role, 'assistant'); assert.match(m2.at(-1)!.content, /Refine your last replacement: add a comment/);
       await vscode.commands.executeCommand('vsgrok.inlineEdit.accept');
-      assert.strictEqual(doc.getText(), 'const a = 1;\nfunction add(x: number, y: number) {\n  return x + y; // sum\n}\nconst z = 3;\n');
+      assert.strictEqual(doc.getText(), '// top\nconst a = 1;\nfunction add(x: number, y: number) {\n  return x + y; // sum\n}\nconst z = 3;\n');
       assert.strictEqual(ie.active, false);
+      // FL1: one undo reverts exactly the accepted edit.
+      await vscode.window.showTextDocument(doc); await vscode.commands.executeCommand('undo');
+      assert.strictEqual(doc.getText(), '// top\nconst a = 1;\nfunction add(x, y) {\n  return x + y;\n}\nconst z = 3;\n');
+      // FH1: an edit inside the region cancels and keeps the user's text; nothing is deleted.
+      ed.selection = new vscode.Selection(2, 0, 2, 0);
+      await reply(xai, 'X\n');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit', 'x');
+      await until(() => ie.state?.ready);
+      const weIn = new vscode.WorkspaceEdit(); weIn.insert(f, new vscode.Position(2, 3), 'MINE'); await vscode.workspace.applyEdit(weIn);
+      assert.strictEqual(ie.active, false); assert.match(doc.getText(), /funMINEction add\(x, y\)/); assert.doesNotMatch(doc.getText(), /^X$/m);
       // Reject restores the original exactly (cursor line only; last line without a newline).
       const we = new vscode.WorkspaceEdit();
       we.replace(f, new vscode.Range(0, 0, doc.lineCount, 0), 'let q = 1;\nlet r = 2');
@@ -590,7 +604,7 @@ suite('VSGrok in VS Code', () => {
       await reply(xai, 'const r = 2;');
       await vscode.commands.executeCommand('vsgrok.inlineEdit', 'make const');
       await until(() => ie.state?.ready);
-      assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2\nconst r = 2;');
+      assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2');
       await vscode.commands.executeCommand('vsgrok.inlineEdit.reject');
       assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2');
       // Accept on the last line keeps no stray newline.
@@ -606,6 +620,8 @@ suite('VSGrok in VS Code', () => {
       const n0 = ((await (await fetch(xai + '/chatRequests')).json()) as unknown[]).length;
       await vscode.commands.executeCommand('vsgrok.inlineEdit', 'anything');
       assert.strictEqual(ie.active, false);
+      assert.match(ie.lastStatus, /isn't available here: looks like a secrets/);
+      await vscode.commands.executeCommand('vsgrok.inlineEdit.reject');
       assert.strictEqual(((await (await fetch(xai + '/chatRequests')).json()) as unknown[]).length, n0);
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       // Keybinding contributions: Ctrl+I yields to other inline-chat providers; Tab only while a result is ready.
