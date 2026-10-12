@@ -5,7 +5,7 @@ button{font-family:inherit}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 #header{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;gap:6px;flex-shrink:0;border-bottom:1px solid var(--vscode-panel-border,transparent)}
 .header-left,.header-right{display:flex;align-items:center;gap:6px}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--vscode-testing-iconPassed,#22c55e)}
+
 .brand{font-weight:700;font-size:12px}
 .h-input{background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:3px;padding:2px 4px;font-size:11px;width:110px}
 .h-btn,.foot-btn,.code-btn{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-contrastBorder,transparent);padding:2px 8px;border-radius:3px;cursor:pointer;font-size:11px}
@@ -64,3 +64,89 @@ button{font-family:inherit}
 .toast{position:fixed;left:10px;right:10px;bottom:56px;padding:6px 8px;border-radius:4px;background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);border:1px solid var(--vscode-notifications-border,var(--vscode-contrastBorder,transparent));font-size:12px}
 body.vscode-high-contrast .message,body.vscode-high-contrast .chip,body.vscode-high-contrast .code-head{border:1px solid var(--vscode-contrastBorder)}
 @media (prefers-reduced-motion:reduce){.message{animation:none}.caret::after,.typing i{animation:none}}
+/* ── shared: new elements ── */
+.logo{width:20px;height:20px;border-radius:5px;flex-shrink:0}
+.brand-sub{font-size:10px;color:var(--vscode-descriptionForeground);letter-spacing:.04em}
+.h-select{max-width:150px;background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border:1px solid var(--vscode-dropdown-border,transparent);border-radius:4px;padding:2px 4px;font-size:11px;font-family:inherit}
+.who{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;margin-bottom:4px;color:var(--vscode-descriptionForeground)}
+.avatar{width:16px;height:16px;border-radius:4px}
+#stars{display:none}
+#welcome{margin:12px 10px;padding:14px;border-radius:10px;border:1px solid var(--vscode-panel-border,var(--vscode-contrastBorder,transparent));background:var(--vscode-editorWidget-background);font-size:12px;line-height:1.5;text-align:left}
+#welcome[hidden]{display:none}
+.welcome-logo{display:block;margin:0 auto 8px;border-radius:12px}
+#welcome h2{font-size:15px;text-align:center;margin-bottom:6px}
+#welcome ol{padding-left:18px;margin:8px 0}
+#welcome .note{margin-top:10px;font-size:11px;color:var(--vscode-descriptionForeground)}
+.welcome-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:1px solid var(--vscode-contrastBorder,transparent);border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600}
+.primary:hover{background:var(--vscode-button-hoverBackground)}
+.h-btn.icon{padding:2px 6px}
+
+/* ── Galactic theme (skipped in high-contrast: those rules keep VS Code vars) ── */
+body.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light){
+  --g-bg:#05060d;--g-bg2:#0b0e1c;--g-panel:rgba(18,22,44,.72);--g-border:rgba(120,160,255,.16);
+  --g-text:#e6ebff;--g-dim:#8f9bc4;--g-cyan:#4fd1ff;--g-violet:#8b7bff;--g-glow:0 0 18px rgba(79,209,255,.25);
+  background:radial-gradient(120% 60% at 50% -10%,#16204a 0%,transparent 60%),radial-gradient(80% 50% at 110% 110%,rgba(139,123,255,.18) 0%,transparent 60%),var(--g-bg);
+  color:var(--g-text);font-family:var(--vscode-font-family);letter-spacing:.005em;position:relative}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #stars{display:block;position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.theme-galactic #stars i{position:absolute;inset:-50% 0 0 0;height:200%;background-repeat:repeat}
+.theme-galactic #stars .s1{background-image:radial-gradient(1px 1px at 20px 30px,#fff,transparent),radial-gradient(1px 1px at 120px 80px,rgba(255,255,255,.8),transparent),radial-gradient(1px 1px at 60px 150px,rgba(180,220,255,.9),transparent),radial-gradient(1px 1px at 170px 190px,#fff,transparent);background-size:200px 200px;opacity:.55;animation:drift 120s linear infinite}
+.theme-galactic #stars .s2{background-image:radial-gradient(1.5px 1.5px at 50px 60px,rgba(79,209,255,.9),transparent),radial-gradient(1.5px 1.5px at 250px 220px,rgba(255,255,255,.9),transparent),radial-gradient(1px 1px at 150px 300px,rgba(139,123,255,.9),transparent);background-size:320px 320px;opacity:.45;animation:drift 200s linear infinite}
+.theme-galactic #stars .s3{background-image:radial-gradient(2px 2px at 300px 100px,rgba(255,255,255,.95),transparent),radial-gradient(2px 2px at 90px 400px,rgba(79,209,255,.8),transparent);background-size:480px 480px;opacity:.35;animation:twinkle 6s ease-in-out infinite alternate,drift 320s linear infinite}
+@keyframes drift{to{transform:translateY(50%)}}
+@keyframes twinkle{from{opacity:.15}to{opacity:.45}}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) > :not(#stars):not(.toast){position:relative;z-index:1}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #header{background:linear-gradient(180deg,rgba(11,14,28,.92),rgba(11,14,28,.6));backdrop-filter:blur(6px);border-bottom:1px solid var(--g-border)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .logo{box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .brand{font-size:13px;letter-spacing:.08em;text-transform:uppercase;background:linear-gradient(90deg,#fff,var(--g-cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .brand-sub,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .agent-toggle,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .meta,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .who{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-select,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-input,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-btn,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .foot-btn,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .code-btn{background:rgba(255,255,255,.04);color:var(--g-text);border:1px solid var(--g-border);border-radius:6px;transition:border-color .15s,box-shadow .15s}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-select option{background:var(--g-bg2);color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-btn:hover,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .h-select:hover,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .foot-btn:hover,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .code-btn:hover:not(:disabled){border-color:var(--g-cyan);box-shadow:var(--g-glow);background:rgba(79,209,255,.08)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #settings-panel{background:var(--g-panel);border-bottom:1px solid var(--g-border)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .slider-row label{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) input[type=range]{accent-color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message{border-radius:14px;padding:10px 12px;line-height:1.6}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message.user{background:linear-gradient(135deg,rgba(79,209,255,.22),rgba(139,123,255,.22));color:var(--g-text);border:1px solid rgba(79,209,255,.3);border-bottom-right-radius:4px;margin-left:28px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message.assistant{background:var(--g-panel);border:1px solid var(--g-border);border-bottom-left-radius:4px;backdrop-filter:blur(4px);margin-right:8px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message.assistant[data-state=streaming]{border-color:rgba(79,209,255,.45);box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .avatar{box-shadow:0 0 8px rgba(79,209,255,.5)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .who span{background:linear-gradient(90deg,#fff,var(--g-cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .body a{color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .body code{background:rgba(139,123,255,.16);color:#cfd6ff}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .code-block{border:1px solid var(--g-border);border-radius:10px;background:#070912}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .code-head{background:rgba(255,255,255,.03);border-bottom:1px solid var(--g-border)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .code-lang{color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .body pre{background:#070912}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .body pre code{background:none;color:#dfe5ff}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .caret::after{background:var(--g-cyan);box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .typing i{background:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .tool-event{color:var(--g-violet)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .chip{background:rgba(79,209,255,.1);color:var(--g-text);border:1px solid var(--g-border);border-radius:999px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #composer{border-top:1px solid var(--g-border);background:linear-gradient(0deg,rgba(11,14,28,.95),rgba(11,14,28,.6));backdrop-filter:blur(6px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #input{background:rgba(255,255,255,.04);color:var(--g-text);border:1px solid var(--g-border);border-radius:10px;padding:7px 9px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #input:focus{outline:none;border-color:var(--g-cyan);box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #input::placeholder{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .send{background:linear-gradient(135deg,var(--g-cyan),var(--g-violet));color:#05060d;border:none;border-radius:10px;box-shadow:var(--g-glow);font-weight:700}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .send.stop{background:transparent;color:#ffb86b;border:2px solid #ffb86b;box-shadow:none}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .pill,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .primary{background:linear-gradient(135deg,var(--g-cyan),var(--g-violet));color:#05060d;border:none;box-shadow:var(--g-glow)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #welcome{background:var(--g-panel);border:1px solid rgba(79,209,255,.3);box-shadow:0 0 40px rgba(79,209,255,.12),inset 0 0 30px rgba(139,123,255,.08);backdrop-filter:blur(6px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #welcome h2{background:linear-gradient(90deg,#fff,var(--g-cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #welcome .note{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .welcome-logo{box-shadow:0 0 28px rgba(79,209,255,.45)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) :focus-visible{outline:2px solid var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) ::-webkit-scrollbar{width:8px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) ::-webkit-scrollbar-thumb{background:rgba(120,160,255,.2);border-radius:4px}
+@media (prefers-reduced-motion:reduce){.theme-galactic #stars i{animation:none!important}.h-btn,.code-btn,.foot-btn,.h-select{transition:none!important}}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message.user{margin-right:6px}
