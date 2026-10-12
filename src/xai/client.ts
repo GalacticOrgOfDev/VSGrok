@@ -59,9 +59,14 @@ export function isRetryable(e: unknown): boolean {
   return e.kind === 'network' || e.kind === 'offline';
 }
 
-/** Exponential backoff with full jitter; Retry-After wins when given. */
+/**
+ * Exponential backoff with jitter; Retry-After wins when given.
+ * Note: a 5xx/connection retry can, rarely, re-run a request xAI had already accepted (and billed) before failing;
+ * we only retry before any response bytes arrive, which keeps that window small. Set maxRetries: 0 to opt out.
+ */
 export function backoffMs(attempt: number, baseMs: number, retryAfterMs?: number, rand = Math.random): number {
-  if (retryAfterMs !== undefined) { return retryAfterMs; }
+  // Retry-After: honor it, but add up to 20% jitter (so many clients don't retry in lockstep) and a 250 ms floor.
+  if (retryAfterMs !== undefined) { const b = Math.max(250, retryAfterMs); return Math.round(b + rand() * b * 0.2); }
   const cap = Math.min(30_000, baseMs * 2 ** attempt);
   return Math.round(cap / 2 + rand() * cap / 2);
 }

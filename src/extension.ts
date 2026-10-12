@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   reg('vsgrok.reindex', async () => { await workspaceIndex.rebuild(); vscode.window.setStatusBarMessage(`$(check) VSGrok indexed ${workspaceIndex.size} files`, 4000); });
   const updater = new Updater(context, chat);
-  if (process.env.VSGROK_TEST === '1') {
+  if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) {
     testApi = { chat, updater, workspaceIndex };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     reg('vsgrok.__testRunTool', async (name: string, args: any) => {
@@ -50,6 +50,8 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
   reg('vsgrok.checkForUpdates', () => updater.check(true));
+  // First check when the user opens the chat panel (card shows right there); also once shortly after startup.
+  chat.onViewReady = () => { void updater.autoCheck(); };
   setTimeout(() => { void updater.autoCheck(); }, 5000);
 
   reg('vsgrok.setApiKey', async () => {

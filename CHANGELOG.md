@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 — 2026-10-12
+**Fix: "Update failed: undefined" (self-update).** Root cause, reproduced against the real GitHub release in VS Code 1.141: the `.vsix` was saved under `globalStorageUri`, which on current desktop builds uses the `vscode-userdata:` scheme. VS Code's VSIX installer only accepts `file:`/`vscode-remote:` URIs and rejects others with the bare string `"No Servers"` (not an Error), so `err.message` was `undefined`. Now:
+- the download goes to a `file:` folder (global storage when it is `file:`, else the OS temp dir);
+- every update error names the step and HTTP status and always has a real message (string rejections, `fetch failed` causes, empty errors);
+- GitHub redirects are followed manually: the first URL must be this repo's release download, and each hop must be an https GitHub asset host;
+- the GitHub API request sends a versioned User-Agent and API version, and a 403/429 explains the rate limit;
+- the 24h throttle resets when the installed version changes, and the first check runs as soon as you open the chat panel.
+
+**Security review (JGrok)**
+- Chat attachments, drag-and-drop, `@file`, folder and `@workspace` listings, the file picker and inline completions now use the secret filter and only accept files inside the workspace (`file`/`vscode-remote`). A refused file shows a "⛔ Refused" chip.
+- git runs only in trusted workspaces, with `core.fsmonitor=false`. Restricted Mode support is declared (`capabilities.untrustedWorkspaces: limited`). Project rules files are ignored in untrusted workspaces.
+- Symlinks are never followed by the index. `read_file`/search refuse any path whose real location is outside the workspace or is a secret.
+- Wider secret patterns: SSH key variants, `.ppk`, `.p8`, `.tfvars`, `terraform.tfstate*`, `.pgpass`, `.boto`, `.yarnrc.yml`, `.vault-token`, kubeconfig, `auth.json`, `.azure/`, `.config/gcloud/`.
+- Diagnostics redaction now covers JSON/JS-quoted keys, Basic/Token auth, `x-api-key`, `user:pass@` in URLs and `?key=`/`token=` query values; the base URL is reported without credentials or query.
+- Index: builds into a fresh index and swaps it in (a generation counter discards stale builds); deleting or renaming a folder drops everything under it; one watcher per workspace folder; every folder of a multi-root workspace is indexed; the `.gitignore` fallback handles `!` negation, trailing `/`, escapes and nested files; `[!x]` globs.
+- Retry-After gets jitter and a 250 ms floor; inline completions never retry; documented that a retry can rarely re-run a request xAI already accepted.
+- CI: `permissions: contents: read`, actions pinned to commit SHAs, `vsce`/`ovsx` as devDependencies, versioned VS Code test cache key.
+- Test hooks are compiled out of production builds (`__VSGROK_TEST__`).
+
+**UI review (UIGrok)**
 - UI review fixes (UIGrok) for the error cards: amber background for rate-limit/offline/timeout/connection cards, a cyan info card for a missing key, a 4px left severity bar and contrast border in high-contrast themes, a single screen-reader announcement per error, wrapping for long titles, an inset look inside replies, Open Settings buttons (offline → API base URL, timeout → request timeout), a New chat button for too-much-context, a first-line hint for unknown errors, the "Rate limited by xAI" title, and their own `.error-btn` button styles.
 - Rules chip: purple border (no longer looks focused), contrast border in HC, "📜 Rules · N" count and "Project rules (N): … Added to every chat." tooltip, a quick pick when several rule files exist, collapses to the icon on narrow sidebars.
 - Header: wraps on narrow sidebars (container queries), semantic `<header>`, `type="button"` and `aria-controls` on header buttons; the Rules chip sits right before ⚙.

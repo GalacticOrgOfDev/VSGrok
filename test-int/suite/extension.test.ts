@@ -103,12 +103,69 @@ suite('VSGrok in VS Code', () => {
     assert.match(found, /src\/shipping\.ts/);
   });
 
+  test('attaching or dropping a .env (or a non-workspace / non-file URI) is refused', async () => {
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    const n0 = posts('contextRefused').length;
+    await vscode.commands.executeCommand('vsgrok.addFileToChat', vscode.Uri.joinPath(root, '.env'));
+    await api.chat.testReceive({ type: 'dropFiles', uris: [vscode.Uri.joinPath(root, '.env').toString(), 'https://evil.example/x', 'file:///etc/hostname'] });
+    const refused = posts('contextRefused').slice(n0);
+    assert.strictEqual(refused.length, 4, JSON.stringify(refused));
+    assert.ok(refused.every(r => r.reason));
+    const chips = posts('contextUpdate').at(-1)?.chips ?? [];
+    assert.ok(!chips.some((c: { path?: string }) => /\.env|hostname/.test(String(c.path))));
+  });
+
+  test('symlinks out of the workspace or onto a secret are never read or indexed', async function () {
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    try { await vscode.workspace.fs.stat(vscode.Uri.joinPath(root, 'src/link-out.ts')); } catch { this.skip(); }
+    const a = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'read_file', { path: 'src/link-out.ts' }));
+    const b = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'read_file', { path: 'src/innocent.ts' }));
+    assert.match(a, /^Refused/); assert.doesNotMatch(a, /kangaroo/);
+    assert.match(b, /^Refused/); assert.doesNotMatch(b, /should-never/);
+    await vscode.commands.executeCommand('vsgrok.reindex');
+    const f = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'find_relevant_files', { query: 'kangaroo should never read' }));
+    assert.match(f, /^No indexed files match/);
+    const g = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'find_relevant_files', { query: 'innocent link out' }));
+    assert.doesNotMatch(g.split('\n').slice(1).join('\n'), /link-out|innocent\.ts/);
+    const s2 = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'search_workspace', { query: 'kangaroo' }));
+    assert.doesNotMatch(s2, /kangaroo/);
+  });
+
+  test('restricted-mode support is declared (git and project rules are trust-gated)', () => {
+    const ext = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!;
+    assert.strictEqual(ext.packageJSON.capabilities?.untrustedWorkspaces?.supported, 'limited');
+    assert.strictEqual(vscode.workspace.isTrusted, true); // this run is trusted, so rules were injected above
+  });
+
   test('check for updates against a mocked release shows an in-chat card', async () => {
     const n0 = posts('updateCard').length;
     await vscode.commands.executeCommand('vsgrok.checkForUpdates');
     const c = await until(() => posts('updateCard')[n0]);
     assert.strictEqual(c.card.state, 'available');
     assert.strictEqual(c.card.latest, '99.0.0');
+  });
+
+  test('LIVE (opt-in VSGROK_LIVE_UPDATE=1): download the real GitHub release vsix through the redirect and install it', async function () {
+    if (process.env.VSGROK_LIVE_UPDATE !== '1') { this.skip(); }
+    this.timeout(180000);
+    const r = await fetch('https://api.github.com/repos/GalacticOrgOfDev/VSGrok/releases/latest', { headers: { 'User-Agent': 'VSGrok-test', Accept: 'application/vnd.github+json' } });
+    assert.strictEqual(r.status, 200);
+    const j = await r.json() as { tag_name: string; html_url: string; assets: { name: string; browser_download_url: string }[] };
+    const a = j.assets.find(x => x.name.endsWith('.vsix'))!;
+    const n0 = posts('updateCard').length;
+    await api.updater.testInstall({ version: j.tag_name.slice(1), tag: j.tag_name, url: j.html_url, notes: '', assetUrl: a.browser_download_url, assetName: a.name });
+    const last = posts('updateCard').slice(n0).at(-1);
+    assert.strictEqual(last.card.state, 'installed', JSON.stringify(last.card));
+  });
+
+  test('update errors always carry a real message and step (mock: 404 asset)', async () => {
+    const base = process.env.VSGROK_TEST_RELEASES_URL!.replace(/\/latest$/, '');
+    const n0 = posts('updateCard').length;
+    await api.updater.testInstall({ version: '99.0.0', tag: 'v99.0.0', url: base + '/rel', notes: '', assetUrl: base + '/dl/missing.vsix', assetName: 'missing.vsix' });
+    const last = posts('updateCard').slice(n0).at(-1);
+    assert.strictEqual(last.card.state, 'error');
+    assert.match(last.card.msg, /^Update failed while downloading \(HTTP 404\): download returned HTTP 404$/);
+    assert.doesNotMatch(last.card.msg, /undefined/);
   });
 
   test('copy diagnostics puts a report without the API key on the clipboard', async () => {

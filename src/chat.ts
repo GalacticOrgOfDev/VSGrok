@@ -10,6 +10,8 @@ import { proposeEdit, proposeRangeEdit } from './proposals';
 import { ApprovalBroker, setApprover } from './agent/approvals';
 import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
+import { checkReadable } from './security';
+import { isSecretPath } from './index/lexical';
 import { RulesWatcher, rulesPrompt } from './rules';
 import { setBusy } from './status';
 import { listModels, ModelInfo } from './xai/models';
@@ -141,6 +143,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   onUpdateAction?: (action: string) => void;
+  /** Called each time the chat webview finishes loading (user opened/reloaded the panel). */
+  onViewReady?: () => void;
   /** Show (or refresh) the in-chat update card; opens the chat view if needed. */
   async showUpdateCard(card: unknown): Promise<void> { await this.showCard('updateCard', card); }
   private async showCard(type: string, card: unknown): Promise<void> {
@@ -168,7 +172,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   get isReady() { return this.ready; }
 
   private post(msg: unknown) {
-    if (process.env.VSGROK_TEST === '1') { this.testPosts.push(msg); } void this.view?.webview.postMessage(msg); }
+    if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) { this.testPosts.push(msg); } void this.view?.webview.postMessage(msg); }
 
   private waitReady(): Promise<void> {
     if (this.ready) { return Promise.resolve(); }
@@ -185,6 +189,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.approvals.cancelAll('panel reloaded');
         this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); void this.pushKeyState(); void this.pushModels();
         this.readyWaiters.splice(0).forEach(r => r());
+        this.onViewReady?.();
         break;
       }
       case 'query': if (typeof m.text === 'string') { await this.send(m.text, Array.isArray(m.images) ? m.images.filter((s: unknown) => typeof s === 'string' && /^data:image\/(png|jpe?g);base64,/.test(s as string)) : undefined); } break;
@@ -207,7 +212,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'pickContext': await this.pickContext(); break;
-      case 'dropFiles': if (Array.isArray(m.uris)) { for (const s of m.uris) { try { await this.addFileContext(vscode.Uri.parse(String(s))); } catch { /* ignore */ } } } break;
+      case 'dropFiles': if (Array.isArray(m.uris)) { for (const s of m.uris.slice(0, 50)) { try { await this.addFileContext(vscode.Uri.parse(String(s), true)); } catch { /* ignore */ } } } break;
       case 'openContext': {
         const c = this.findContext(String(m.id));
         if (c) { const ed = await vscode.window.showTextDocument(c.uri, { preview: true }); if (c.range) { ed.selection = new vscode.Selection(c.range.start, c.range.end); ed.revealRange(c.range); } }
@@ -285,6 +290,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   async addFileContext(uri: vscode.Uri, range?: vscode.Range) {
+    const chk = await checkReadable(uri);
+    if (!chk.ok) {
+      diag('context.refused', { reason: chk.reason });
+      this.post({ type: 'contextRefused', path: chk.rel, reason: chk.reason });
+      return;
+    }
     let kind: ContextItem['kind'] = range ? 'selection' : 'file';
     try { const st = await vscode.workspace.fs.stat(uri); if (st.type & vscode.FileType.Directory) { kind = 'folder'; } } catch { return; }
     if (this.contexts.some(c => c.uri.toString() === uri.toString() && !c.range && !range)) { return; }
@@ -304,7 +315,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     else if (pick.action === 'selection' && ed) { await this.addFileContext(ed.document.uri, new vscode.Range(ed.selection.start, ed.selection.end)); }
     else if (pick.action === 'browse') {
       const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,out}/**', 5000);
-      const chosen = await vscode.window.showQuickPick(files.map(f => ({ label: vscode.workspace.asRelativePath(f), uri: f })), { canPickMany: true, matchOnDescription: true, placeHolder: 'Pick files' });
+      const chosen = await vscode.window.showQuickPick(files.filter(f => !isSecretPath(vscode.workspace.asRelativePath(f, false))).map(f => ({ label: vscode.workspace.asRelativePath(f), uri: f })), { canPickMany: true, matchOnDescription: true, placeHolder: 'Pick files' });
       for (const c of chosen ?? []) { await this.addFileContext(c.uri); }
     }
   }
@@ -316,9 +327,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       try {
         if (c.kind === 'folder') {
           const files = await vscode.workspace.findFiles(new vscode.RelativePattern(c.uri, '**/*'), '**/{node_modules,.git}/**', 300);
-          parts.push(`[Folder: ${rel}]\n` + files.map(f => '- ' + vscode.workspace.asRelativePath(f)).join('\n'));
+          parts.push(`[Folder: ${rel}]\n` + files.map(f => vscode.workspace.asRelativePath(f, false)).filter(p => !isSecretPath(p)).map(p => '- ' + p).join('\n'));
           continue;
         }
+        const chk = await checkReadable(c.uri);
+        if (!chk.ok) { parts.push(`[Refused ${chk.rel}: ${chk.reason}]`); continue; }
         const doc = await vscode.workspace.openTextDocument(c.uri);
         let text = c.range ? doc.getText(c.range) : doc.getText();
         const cap = clampNum(cfg().get('context.maxFileChars'), 10_000, 2_000_000, 1_000_000);
@@ -340,7 +353,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     if (out.includes('@workspace')) {
       const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,out}/**', 300);
-      out = out.replace(/@workspace\b/g, '(workspace listing attached)') + '\n\n[Workspace files]\n' + files.map(f => '- ' + vscode.workspace.asRelativePath(f)).sort().join('\n');
+      out = out.replace(/@workspace\b/g, '(workspace listing attached)') + '\n\n[Workspace files]\n' + files.map(f => vscode.workspace.asRelativePath(f, false)).filter(p => !isSecretPath(p)).sort().map(p => '- ' + p).join('\n');
     }
     return out;
   }

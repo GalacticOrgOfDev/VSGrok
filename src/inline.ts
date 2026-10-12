@@ -1,3 +1,4 @@
+import { isSecretPath } from './index/lexical';
 // Inline ghost-text completions with debounce and cancellation.
 import * as vscode from 'vscode';
 import { streamChat } from './xai/client';
@@ -10,6 +11,7 @@ export class GrokInlineProvider implements vscode.InlineCompletionItemProvider {
   async provideInlineCompletionItems(doc: vscode.TextDocument, pos: vscode.Position, _c: vscode.InlineCompletionContext, token: vscode.CancellationToken) {
     const c = cfg();
     if (!c.get<boolean>('inlineCompletions.enabled')) { return; }
+    if (isSecretPath(vscode.workspace.asRelativePath(doc.uri, false))) { return; } // never send .env/key files to xAI
     const delay = clampNum(c.get('inlineCompletions.debounceMs'), 0, 2000, 275);
     await new Promise(r => setTimeout(r, delay));
     if (token.isCancellationRequested) { return; }
@@ -33,6 +35,7 @@ export class GrokInlineProvider implements vscode.InlineCompletionItemProvider {
         maxTokens: clampNum(c.get('inlineCompletions.maxTokens'), 16, 1024, 128),
         signal: abort.signal,
         timeoutMs: 20000,
+        maxRetries: 0, // completions are latency-sensitive and superseded by the next keystroke
       });
       if (token.isCancellationRequested) { return; }
       const insert = cleanCompletion(res.content, prefix, suffix);

@@ -75,7 +75,10 @@ export class Bm25Index {
 }
 
 /** Glob → RegExp for workspace-relative POSIX paths. Supports **, *, ?, {a,b}, character classes; pattern without "/" matches any basename. */
-export function globToRegExp(glob: string): RegExp {
+export function globToRegExp(glob: string): RegExp { return new RegExp('^' + globBody(glob) + '(?:/.*)?$'); }
+
+/** Regex source for a glob without anchors/suffix. */
+export function globBody(glob: string): string {
   let g = glob.trim().replace(/\\/g, '/');
   if (g.startsWith('/')) { g = g.replace(/^\/+/, ''); } else if (!g.includes('/')) { g = '**/' + g; }
   let re = '';
@@ -88,10 +91,10 @@ export function globToRegExp(glob: string): RegExp {
       } else { re += '[^/]*'; }
     } else if (c === '?') { re += '[^/]'; }
     else if (c === '{') { const j = g.indexOf('}', i); if (j < 0) { re += '\\{'; continue; } re += '(?:' + g.slice(i + 1, j).split(',').map(x => x.replace(/[.+^$()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')).join('|') + ')'; i = j; }
-    else if (c === '[') { const j = g.indexOf(']', i); if (j < 0) { re += '\\['; continue; } re += g.slice(i, j + 1); i = j; }
+    else if (c === '[') { const j = g.indexOf(']', i); if (j < 0) { re += '\\['; continue; } re += '[' + g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = j; }
     else { re += c.replace(/[.+^$()|\\]/g, '\\$&'); }
   }
-  return new RegExp('^' + re + '(?:/.*)?$');
+  return re;
 }
 
 export function makeMatcher(globs: string[]): (path: string) => boolean {
@@ -99,21 +102,53 @@ export function makeMatcher(globs: string[]): (path: string) => boolean {
   return (p) => res.some(r => r.test(p));
 }
 
-/** .gitignore lines → globs (negations dropped: best effort, used only when git is unavailable). */
+/** .gitignore lines → globs (negations dropped). Kept for callers that only need exclude globs. */
 export function gitignoreToGlobs(text: string): string[] {
-  const out: string[] = [];
-  for (let line of text.split(/\r?\n/)) {
-    line = line.trim();
-    if (!line || line.startsWith('#') || line.startsWith('!')) { continue; }
-    const anchored = line.startsWith('/') || line.replace(/\/$/, '').includes('/');
-    line = line.replace(/^\//, '').replace(/\/$/, '');
-    out.push(anchored ? '/' + line : '**/' + line);
-  }
-  return out;
+  return parseGitignore(text).filter(r => !r.negate).map(r => (r.anchored ? '/' : '**/') + r.pattern);
 }
 
-const SECRET_BASENAME = /^(\.env(\..*)?|.*\.env|\.envrc|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json|\.ya?ml)?|secrets?\.(json|ya?ml|toml|txt|ini|cfg|conf)|.*secret.*\.(json|ya?ml|toml|txt)|service[-_]account.*\.json|.*\.(pem|key|p12|pfx|keystore|jks|kdbx|ovpn|asc|gpg))$/i;
-const SECRET_DIR = /(^|\/)(\.ssh|\.aws|\.gnupg|\.docker|\.kube)(\/|$)/i;
+interface IgnoreRule { pattern: string; negate: boolean; dirOnly: boolean; anchored: boolean; re: RegExp }
+
+/** Parse .gitignore semantics: comments, `\#`/`\!` escapes, trailing-space trim, `!` negation, trailing `/` (dirs only), anchoring. */
+export function parseGitignore(text: string): IgnoreRule[] {
+  const rules: IgnoreRule[] = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.replace(/(?<!\\)\s+$/, '');
+    if (!line || line.startsWith('#')) { continue; }
+    let negate = false;
+    if (line.startsWith('!')) { negate = true; line = line.slice(1); }
+    line = line.replace(/^\\([#!])/, '$1').replace(/\\ /g, ' ');
+    const dirOnly = line.endsWith('/');
+    line = line.replace(/\/+$/, '');
+    if (!line) { continue; }
+    const anchored = line.startsWith('/') || line.includes('/');
+    line = line.replace(/^\//, '');
+    const glob = (anchored ? '/' : '') + line;
+    const base = '^' + globBody(glob);
+    // dirOnly: the pattern must match a directory, i.e. a path prefix followed by "/".
+    const re = new RegExp(base + (dirOnly ? '/.*$' : '(?:/.*)?$'));
+    rules.push({ pattern: line, negate, dirOnly, anchored, re });
+  }
+  return rules;
+}
+
+/** Combined matcher for nested .gitignore files: [{dir:'' | 'sub/dir', text}]. Last matching rule wins (deeper files later). */
+export function gitignoreMatcher(files: { dir: string; text: string }[]): (path: string) => boolean {
+  const sets = files.map(f => ({ dir: f.dir.replace(/^\/+|\/+$/g, ''), rules: parseGitignore(f.text) }))
+    .sort((a, b) => (a.dir ? a.dir.split('/').length : 0) - (b.dir ? b.dir.split('/').length : 0));
+  return (p) => {
+    let ignored = false;
+    for (const s of sets) {
+      if (s.dir && !p.startsWith(s.dir + '/')) { continue; }
+      const rel = s.dir ? p.slice(s.dir.length + 1) : p;
+      for (const r of s.rules) { if (r.re.test(rel)) { ignored = !r.negate; } }
+    }
+    return ignored;
+  };
+}
+
+const SECRET_BASENAME = /^(id_(rsa|dsa|ecdsa|ed25519)[\w.-]*|.*\.(ppk|p8|tfvars)|.*\.tfvars\.json|terraform\.tfstate.*|\.pgpass|\.boto|\.yarnrc\.yml|\.vault-token|kubeconfig.*|auth\.json|\.env(\..*)?|.*\.env|\.envrc|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json|\.ya?ml)?|secrets?\.(json|ya?ml|toml|txt|ini|cfg|conf)|.*secret.*\.(json|ya?ml|toml|txt)|service[-_]account.*\.json|.*\.(pem|key|p12|pfx|keystore|jks|kdbx|ovpn|asc|gpg))$/i;
+const SECRET_DIR = /(^|\/)(\.ssh|\.aws|\.azure|\.gnupg|\.docker|\.kube|\.config\/gcloud)(\/|$)/i;
 
 /** True for .env files and anything that looks like credentials/keys. These are never read or indexed. */
 export function isSecretPath(relPath: string): boolean {
@@ -134,4 +169,13 @@ export function bestLines(content: string, query: string, max = 3): { line: numb
     if (s) { scored.push({ line: i + 1, text: l.trim().slice(0, 160), s }); }
   });
   return scored.sort((a, b) => b.s - a.s || a.line - b.line).slice(0, max).map(({ line, text }) => ({ line, text }));
+}
+
+/** git argv for listing files: fsmonitor (which can execute a configured command) and untracked cache disabled. */
+export const GIT_LS_ARGS = ['-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'];
+
+/** True if `child` (absolute, resolved) is `root` or inside it. */
+export function isInside(root: string, child: string, sep = '/'): boolean {
+  const r = root.replace(/[\\/]+$/, '');
+  return child === r || child.startsWith(r + sep);
 }

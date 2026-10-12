@@ -1,6 +1,6 @@
 // VSGrok diagnostics: opt-in (vsgrok.diagnostics.enabled, off by default), local only.
 import * as vscode from 'vscode';
-import { DiagFields, RingLog, formatEntry, redact } from './diagLog';
+import { DiagFields, RingLog, formatEntry, redact, sanitizeUrl } from './diagLog';
 import { setRetryListener } from './xai/client';
 import { cfg, SECRET_KEY } from './config';
 
@@ -52,7 +52,7 @@ export async function diagnosticsReport(ctx: vscode.ExtensionContext): Promise<s
     `API key set: ${hasKey ? 'yes' : 'no'}`,
     '',
     '## Settings',
-    ...keys.map(k => `${k}: ${JSON.stringify(c.get(k))}`),
+    ...keys.map(k => `${k}: ${k === 'baseUrl' ? JSON.stringify(sanitizeUrl(c.get(k))) : JSON.stringify(c.get(k))}`),
     '',
     `## Log (${diagEnabled() ? 'last ' + ring.all().length + ' events' : 'disabled; enable vsgrok.diagnostics.enabled to record events'})`,
     ...ring.all(),

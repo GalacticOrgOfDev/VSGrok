@@ -6,6 +6,7 @@ import { proposeEdit } from '../proposals';
 import { requestApproval } from './approvals';
 import { isSecretPath } from '../index/lexical';
 import { diag } from '../diagnostics';
+import { checkReadable } from '../security';
 import { workspaceIndex } from '../index/workspaceIndex';
 
 function toSignal(token: vscode.CancellationToken): AbortSignal {
@@ -144,7 +145,10 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
       case 'find_relevant_files': return await workspaceIndex.findRelevant(String(args.query ?? ''), Number(args.max) || 10, token);
       case 'read_file': {
         if (isSecretPath(String(args.path))) { return `Refused: ${args.path} looks like a secrets/credentials file (.env, keys, tokens). VSGrok never reads these.`; }
-        return await readText(resolveInWorkspace(String(args.path)));
+        const u = resolveInWorkspace(String(args.path));
+        const chk = await checkReadable(u);
+        if (!chk.ok) { return `Refused: ${args.path} (${chk.reason}). VSGrok never reads these.`; }
+        return await readText(u);
       }
       case 'list_files': {
         const files = await vscode.workspace.findFiles(args.glob || '**/*', EXCLUDE, Math.min(Number(args.max) || 300, 2000), token);
@@ -157,7 +161,7 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
         const hits: string[] = [];
         for (const f of files) {
           if (token.isCancellationRequested || hits.length >= 200) { break; }
-          if (isSecretPath(vscode.workspace.asRelativePath(f, false))) { continue; }
+          if (isSecretPath(vscode.workspace.asRelativePath(f, false)) || !(await checkReadable(f)).ok) { continue; }
           let text: string;
           try { const b = await vscode.workspace.fs.readFile(f); if (b.length > 1_000_000 || b.includes(0)) { continue; } text = Buffer.from(b).toString('utf8'); } catch { continue; }
           text.split('\n').forEach((line, i) => {

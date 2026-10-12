@@ -78,7 +78,9 @@ test('parseRetryAfter / backoffMs / isRetryable', () => {
   assert.equal(backoffMs(0, 1000, undefined, () => 0), 500);
   assert.equal(backoffMs(3, 1000, undefined, () => 1), 8000);
   assert.equal(backoffMs(10, 1000, undefined, () => 1), 30000);
-  assert.equal(backoffMs(1, 1000, 1234), 1234);
+  assert.equal(backoffMs(1, 1000, 1234, () => 0), 1234);
+  assert.equal(backoffMs(1, 1000, 1000, () => 1), 1200);
+  assert.equal(backoffMs(1, 1000, 0, () => 0), 250);
   assert.equal(isRetryable(new GrokApiError('x', 'rate_limit')), true);
   assert.equal(isRetryable(new GrokApiError('x', 'auth')), false);
 });

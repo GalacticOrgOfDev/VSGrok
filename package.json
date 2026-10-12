@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -375,9 +375,11 @@
     "@types/node": "22.x",
     "@types/vscode": "^1.105.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
     "mocha": "^12.0.3",
+    "ovsx": "^1.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
   },
@@ -402,5 +404,11 @@
     "chat",
     "code completion",
     "agent"
-  ]
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md, and still never reads .env or credential files. Agent edits and commands always need your approval."
+    }
+  }
 }

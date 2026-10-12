@@ -21,6 +21,10 @@ async function main() {
   // Copy the fixture so the index/rules tests can't dirty the repo.
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'vsgrok-ws-'));
   fs.cpSync(path.join(root, 'test-int', 'fixture'), ws, { recursive: true });
+  // Symlinks: one escaping the workspace, one pointing at the fixture's .env.
+  const outside = path.join(os.tmpdir(), `vsgrok-outside-${process.pid}.txt`);
+  fs.writeFileSync(outside, 'outside-secret-kangaroo');
+  try { fs.symlinkSync(outside, path.join(ws, 'src', 'link-out.ts')); fs.symlinkSync(path.join(ws, '.env'), path.join(ws, 'src', 'innocent.ts')); } catch { /* no symlink support */ }
   try {
     require('child_process').execFileSync('git', ['init', '-q'], { cwd: ws });
   } catch { /* git optional: index falls back to .gitignore parsing */ }
@@ -28,12 +32,12 @@ async function main() {
     await runTests({
       extensionDevelopmentPath: root,
       extensionTestsPath: path.join(__dirname, 'suite', 'index'),
-      launchArgs: [ws, '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes'],
-      extensionTestsEnv: { VSGROK_TEST: '1', VSGROK_TEST_RELEASES_URL: `http://127.0.0.1:${port}/latest` },
+      launchArgs: [ws, ...(process.env.VSGROK_LIVE_UPDATE === '1' ? [] : ['--disable-extensions']), '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes'],
+      extensionTestsEnv: { VSGROK_TEST: '1', VSGROK_TEST_RELEASES_URL: `http://127.0.0.1:${port}/latest`, VSGROK_LIVE_UPDATE: process.env.VSGROK_LIVE_UPDATE ?? '' },
     });
   } catch (e) {
     console.error('Integration tests failed', e);
     process.exitCode = 1;
-  } finally { srv.close(); fs.rmSync(ws, { recursive: true, force: true }); }
+  } finally { srv.close(); fs.rmSync(ws, { recursive: true, force: true }); fs.rmSync(outside, { force: true }); }
 }
 void main();

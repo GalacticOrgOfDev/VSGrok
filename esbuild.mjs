@@ -15,6 +15,7 @@ const options = {
   minify: production,
   external: ['vscode'],
   logLevel: 'info',
+  define: { __VSGROK_TEST__: production ? 'false' : 'true' },
 };
 
 if (watch) {

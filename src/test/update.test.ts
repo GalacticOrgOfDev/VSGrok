@@ -45,3 +45,34 @@ test('parseRelease: picks the repo .vsix asset; ignores drafts/prereleases/forei
   assert.equal(parseRelease({ ...base, assets: [{ name: 'x.vsix', browser_download_url: 'https://evil.example/x.vsix' }] }), undefined);
   assert.equal(parseRelease({ message: 'Not Found' }), undefined);
 });
+
+import { describeError, isAllowedRedirect, stepError } from '../updateCheck';
+
+test('describeError never yields "undefined" (string rejections like VS Code\'s "No Servers")', () => {
+  assert.equal(describeError('No Servers'), 'No Servers');
+  assert.equal(describeError(undefined), 'unknown error (no details)');
+  assert.equal(describeError(null), 'unknown error (no details)');
+  assert.equal(describeError(''), 'unknown error (empty message)');
+  assert.equal(describeError(new Error('boom')), 'boom');
+  assert.equal(describeError({ code: 'ENOENT' }), 'ENOENT');
+  assert.equal(describeError({}), 'unknown error (no details)');
+  assert.equal(describeError({ foo: 1 }), '{"foo":1}');
+  const fetchErr = new TypeError('fetch failed'); (fetchErr as any).cause = { code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND github.com' }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  assert.equal(describeError(fetchErr), 'fetch failed (ENOTFOUND getaddrinfo ENOTFOUND github.com)');
+  for (const v of ['x', undefined, null, {}, 42, new Error('')]) { assert.doesNotMatch(describeError(v), /^undefined$|: undefined/); }
+});
+
+test('stepError names the step and HTTP status', () => {
+  assert.equal(stepError('installing', 'No Servers'), 'Update failed while installing: No Servers');
+  assert.equal(stepError('downloading', new Error('download returned HTTP 404'), 404), 'Update failed while downloading (HTTP 404): download returned HTTP 404');
+});
+
+test('download redirects: only GitHub asset hosts over https', () => {
+  assert.ok(isAllowedRedirect('https://release-assets.githubusercontent.com/github-production-release-asset/1?sig=x'));
+  assert.ok(isAllowedRedirect('https://objects.githubusercontent.com/x'));
+  assert.ok(!isAllowedRedirect('http://objects.githubusercontent.com/x'));
+  assert.ok(!isAllowedRedirect('https://evil.example/x.vsix'));
+  assert.ok(!isAllowedRedirect('https://objects.githubusercontent.com.evil.example/x'));
+  assert.ok(!isAllowedRedirect('not a url'));
+  assert.ok(isAllowedRedirect('http://127.0.0.1:5/dl', 'http://127.0.0.1:5'));
+});

@@ -48,3 +48,41 @@ export function parseRelease(j: any, assetPrefix = 'https://github.com/GalacticO
   if (!a) { return undefined; }
   return { version: j.tag_name.replace(/^v/, ''), tag: j.tag_name, url: String(j.html_url ?? ''), notes: String(j.body ?? '').slice(0, 2000), assetUrl: a.browser_download_url!, assetName: a.name! };
 }
+
+/** A different installed version (update, downgrade, first run) clears the 24h throttle. */
+export function versionChanged(stored: string | undefined, current: string): boolean { return stored !== current; }
+
+/** Human-readable message for anything thrown (Error, string, {message}, {code}, undefined). Never returns "undefined". */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function describeError(e: any): string {
+  if (e === undefined || e === null) { return 'unknown error (no details)'; }
+  if (typeof e === 'string') { return e || 'unknown error (empty message)'; }
+  const parts: string[] = [];
+  const msg = typeof e.message === 'string' && e.message ? e.message : '';
+  if (msg) { parts.push(msg); }
+  const cause = e.cause;
+  if (cause) { const c = typeof cause === 'object' ? (cause.code ? `${cause.code}${cause.message ? ' ' + cause.message : ''}` : cause.message) : String(cause); if (c && !msg.includes(String(c))) { parts.push(`(${c})`); } }
+  if (!msg && e.code) { parts.push(String(e.code)); }
+  if (!parts.length) {
+    if (e.name && e.name !== 'Error') { parts.push(String(e.name)); }
+    else { try { const j = JSON.stringify(e); if (j && j !== '{}') { parts.push(j.slice(0, 300)); } } catch { /* circular */ } }
+  }
+  if (!parts.length) { const s = String(e); parts.push(s && s !== '[object Object]' ? s : 'unknown error (no details)'); }
+  return parts.join(' ');
+}
+
+/** Hosts a release-asset download may land on after GitHub's redirect. The first URL must still pass parseRelease's allowlist. */
+export const DOWNLOAD_REDIRECT_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', 'github-releases.githubusercontent.com']);
+export function isAllowedRedirect(url: string, testOrigin?: string): boolean {
+  try {
+    const u = new URL(url);
+    if (testOrigin && u.origin === testOrigin) { return true; }
+    return u.protocol === 'https:' && DOWNLOAD_REDIRECT_HOSTS.has(u.hostname.toLowerCase());
+  } catch { return false; }
+}
+
+/** Steps of the self-update, named in error messages. */
+export type UpdateStep = 'checking GitHub' | 'downloading' | 'verifying download' | 'saving to extension storage' | 'installing';
+export function stepError(step: UpdateStep, e: unknown, status?: number): string {
+  return `Update failed while ${step}${status ? ` (HTTP ${status})` : ''}: ${describeError(e)}`;
+}

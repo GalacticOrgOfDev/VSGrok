@@ -55,7 +55,7 @@ test('bestLines finds matching lines', () => {
 
 test('diagnostics: redact keys/tokens, truncate long values, ring buffer cap', () => {
   assert.equal(redact('key xai-abcdefghijklmnop end'), 'key [redacted] end');
-  assert.equal(redact('Authorization: Bearer abc.def'), 'Authorization: [redacted]');
+  assert.equal(redact('Authorization: Bearer abc.def'), 'Authorization: Bearer [redacted]');
   assert.match(redact('api_key=xyz123'), /api_key=\[redacted\]/);
   assert.match(redact('ghp_' + 'a'.repeat(36)), /\[redacted\]/);
   const line = formatEntry(new Date(0), 'evt', { a: 1, s: 'x'.repeat(300), k: 'xai-1234567890abcdef', u: undefined });

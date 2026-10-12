@@ -227,3 +227,4 @@ body.vscode-high-contrast .rules-chip,body.vscode-high-contrast-light .rules-chi
 .header-left{min-width:0;flex-shrink:1}
 .header-left .brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @container (max-width:260px){.header-left .brand-sub{display:none}}
+.chip.refused{border:1px solid var(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground));color:var(--vscode-errorForeground);cursor:default}

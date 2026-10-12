@@ -420,6 +420,11 @@
         rc.title = v.tooltip; rc.setAttribute('aria-label', v.tooltip || 'Project rules');
         break;
       }
+      case 'contextRefused': {
+        const box = $('chips'); const c = document.createElement('span'); c.className = 'chip refused'; c.setAttribute('role', 'status');
+        c.textContent = '⛔ Refused ' + String(m.path || 'file') + (m.reason ? ': ' + String(m.reason) : '');
+        box.appendChild(c); setTimeout(() => c.remove(), 6000); break;
+      }
       case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
       case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }
