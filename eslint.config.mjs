@@ -1,4 +1,4 @@
-import { parser as tsParser } from 'typescript-eslint';
+
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
@@ -8,7 +8,7 @@ export default tseslint.config(
   {
     files: ['**/*.ts'],
     languageOptions: {
-      parser: tsParser,
+      
       parserOptions: {
         project: './tsconfig.json',
       },

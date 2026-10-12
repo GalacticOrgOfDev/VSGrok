@@ -1,0 +1,13 @@
+src/**
+out/**
+out-test/**
+node_modules/**
+.git/**
+.gitignore
+**/*.map
+**/*.ts
+tsconfig*.json
+eslint.config.mjs
+esbuild.mjs
+pnpm-lock.yaml
+UX/**

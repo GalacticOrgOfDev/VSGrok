@@ -1,8 +1,8 @@
 {
   "name": "vsgrok",
   "displayName": "VSGrok",
-  "description": "A premium AI coding agent powered by Grok (xAI) — chat, explain, fix, comment, and test code directly in VSCode.",
-  "version": "0.1.0",
+  "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
+  "version": "0.2.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -13,34 +13,76 @@
     "Chat"
   ],
   "activationEvents": [
-    "onView:VSGrokView"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "vsgrok.query",
-        "title": "VSGrok: Ask Query"
+        "title": "Ask Grok",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.agentTask",
+        "title": "Start Agent Task",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.stop",
+        "title": "Stop Generating",
+        "category": "VSGrok"
       },
       {
         "command": "vsgrok.explainCode",
-        "title": "VSGrok: Explain Code"
+        "title": "Explain Code",
+        "category": "VSGrok"
       },
       {
         "command": "vsgrok.fixCode",
-        "title": "VSGrok: Fix Code"
+        "title": "Fix Code",
+        "category": "VSGrok"
       },
       {
         "command": "vsgrok.addComments",
-        "title": "VSGrok: Add Comments"
+        "title": "Add Comments",
+        "category": "VSGrok"
       },
       {
         "command": "vsgrok.writeTests",
-        "title": "VSGrok: Write Tests"
+        "title": "Write Tests",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "category": "VSGrok",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "vsgrok.fixDiagnostic",
+        "title": "Fix Problem with Grok",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.addFileToChat",
+        "title": "Add File to Chat",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.toggleInline",
+        "title": "Toggle Inline Completions",
+        "category": "VSGrok"
       },
       {
         "command": "vsgrok.setApiKey",
-        "title": "VSGrok: Set API Key"
+        "title": "Set API Key",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.clearApiKey",
+        "title": "Clear API Key",
+        "category": "VSGrok"
       }
     ],
     "menus": {
@@ -65,6 +107,25 @@
           "when": "editorHasSelection",
           "group": "vsgrok@4"
         }
+      ],
+      "explorer/context": [
+        {
+          "command": "vsgrok.addFileToChat",
+          "group": "vsgrok"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "vsgrok.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vsgrok.fixDiagnostic",
+          "when": "false"
+        }
       ]
     },
     "viewsContainers": {
@@ -72,7 +133,7 @@
         {
           "id": "vsgrok-sidebar",
           "title": "VSGrok Agent",
-          "icon": "media/grok-icon.svg"
+          "icon": "media/Grok-Icon.png"
         }
       ]
     },
@@ -82,38 +143,127 @@
           "id": "VSGrokView",
           "name": "VSGrok Chat",
           "type": "webview",
-          "icon": "media/grok-icon.svg"
+          "icon": "media/Grok-Icon.png"
         }
       ]
+    },
+    "keybindings": [
+      {
+        "command": "vsgrok.stop",
+        "key": "escape",
+        "when": "focusedView == VSGrokView"
+      },
+      {
+        "command": "vsgrok.query",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      }
+    ],
+    "configuration": {
+      "title": "VSGrok",
+      "properties": {
+        "vsgrok.model": {
+          "type": "string",
+          "default": "grok-4.7",
+          "description": "xAI model id used for chat, commands and agent mode (see https://docs.x.ai/docs/models)."
+        },
+        "vsgrok.baseUrl": {
+          "type": "string",
+          "default": "https://api.x.ai/v1",
+          "description": "Base URL of the xAI OpenAI-compatible API."
+        },
+        "vsgrok.temperature": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sampling temperature."
+        },
+        "vsgrok.maxTokens": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 1,
+          "description": "Maximum tokens per response."
+        },
+        "vsgrok.requestTimeoutSeconds": {
+          "type": "number",
+          "default": 120,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "Abort a request if no data arrives for this many seconds."
+        },
+        "vsgrok.agent.enabledByDefault": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start chats in agent mode (tool use)."
+        },
+        "vsgrok.agent.maxSteps": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum tool-call rounds per agent request."
+        },
+        "vsgrok.inlineCompletions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Grok ghost-text completions while typing."
+        },
+        "vsgrok.inlineCompletions.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model for inline completions (empty = vsgrok.model)."
+        },
+        "vsgrok.inlineCompletions.debounceMs": {
+          "type": "number",
+          "default": 275,
+          "minimum": 0,
+          "maximum": 2000,
+          "description": "Delay after typing before requesting a completion."
+        },
+        "vsgrok.inlineCompletions.maxTokens": {
+          "type": "number",
+          "default": 128,
+          "minimum": 16,
+          "maximum": 1024,
+          "description": "Maximum tokens for an inline completion."
+        }
+      }
     }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
     "compile": "pnpm run check-types && pnpm run lint && node esbuild.mjs",
-    "watch": "npm-run-all -p watch:*",
-    "watch:esbuild": "node esbuild.mjs --watch",
-    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "watch": "node esbuild.mjs --watch",
     "package": "pnpm run check-types && pnpm run lint && node esbuild.mjs --production",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "tsc -p tsconfig.test.json && node --test out-test/test/"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
+    "@eslint/js": "^10.0.1",
     "@types/node": "22.x",
     "@types/vscode": "^1.105.0",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
-    "npm-run-all": "^4.1.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
   },
-  "dependencies": {
-    "marked": "^17.0.0"
-  }
+  "publisher": "GalacticOrgOfDev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GalacticOrgOfDev/VSGrok.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GalacticOrgOfDev/VSGrok/issues"
+  },
+  "keywords": [
+    "grok",
+    "xai",
+    "ai",
+    "chat",
+    "code completion",
+    "agent"
+  ]
 }
