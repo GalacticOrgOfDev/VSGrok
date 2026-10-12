@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 
@@ -413,7 +414,7 @@ suite('VSGrok in VS Code', () => {
     assert.strictEqual(c.request.repoControlled, true); assert.match(c.request.source, /package\.json/);
     await api.chat.testReceive({ type: 'approvalResponse', reqId: c.reqId, decision: 'deny' }); await p;
     const pj = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!.packageJSON;
-    assert.deepStrictEqual(pj.capabilities.untrustedWorkspaces.restrictedConfigurations, ['vsgrok.testCommand', 'vsgrok.agent.autoApprove', 'vsgrok.agent.commandAllowlist']);
+    assert.deepStrictEqual(pj.capabilities.untrustedWorkspaces.restrictedConfigurations, ['vsgrok.testCommand', 'vsgrok.agent.autoApprove', 'vsgrok.agent.commandAllowlist', 'vsgrok.mcp.servers']);
     assert.strictEqual(pj.contributes.configuration.properties['vsgrok.testCommand'].scope, 'machine-overridable');
   });
 
@@ -770,5 +771,77 @@ suite('VSGrok in VS Code', () => {
       assert.match(posts('toast')[t0].msg, /Wait for Grok to finish/);
       chat['busy'] = false;
     });
+  });
+
+  // ---------- 0.12.0: MCP ----------
+  test('MCP: stdio + streamable HTTP servers, tools offered to Grok, approval card with Always allow, workspace file merge', async () => {
+    const xai = process.env.VSGROK_TEST_XAI!;
+    const base = xai.replace(/\/xai$/, '');
+    const serverJs = path.resolve(__dirname, '..', '..', '..', 'test-int', 'mcp-echo-server.cjs');
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    const wsFile = vscode.Uri.joinPath(root, '.vscode', 'vsgrok-mcp.json');
+    await c.update('mcp.servers', {
+      echo: { command: 'node', args: [serverJs], env: { ECHO_LABEL: 'stdio' } },
+      web: { url: `${base}/mcp`, headers: { 'x-test-auth': 'ok' } },
+      down: { url: 'http://127.0.0.1:1/mcp' },
+    }, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.fs.writeFile(wsFile, Buffer.from(JSON.stringify({ servers: { wsecho: { command: 'node', args: [serverJs], env: { ECHO_LABEL: 'ws' } }, echo: { command: 'evil' } } })));
+    try {
+      api.mcp.reload(); await api.mcp.ready();
+      const st = api.mcp.status();
+      const by = (n: string) => st.servers.find((x: { name: string }) => x.name === n);
+      assert.strictEqual(by('echo').status, 'ready', JSON.stringify(st)); assert.deepStrictEqual(by('echo').tools, ['echo', 'add.numbers']);
+      assert.strictEqual(by('web').status, 'ready', JSON.stringify(st)); assert.strictEqual(by('web').type, 'http');
+      assert.strictEqual(by('down').status, 'error');
+      assert.strictEqual(by('wsecho').source, 'workspace'); assert.strictEqual(by('wsecho').status, 'ready');
+      assert.match(st.errors.join('\n'), /echo: defined in settings and \.vscode\/vsgrok-mcp\.json; the settings one is used/);
+      const names = api.mcp.functionTools().map((t: { name: string }) => t.name);
+      assert.ok(names.includes('mcp__echo__echo') && names.includes('mcp__web__add_numbers') && names.includes('mcp__wsecho__echo'), names.join());
+      await withMock('mock-text', async () => {
+        await api.chat.testReceive({ type: 'clearChat' }); await idle();
+        await api.chat.testReceive({ type: 'setAgent', enabled: true });
+        await rreply(xai, { output: [fcall(11, 'mcp__echo__echo', { text: 'hi' })] });
+        await rreply(xai, { output: [fcall(12, 'mcp__echo__echo', { text: 'again' })] });
+        await rreply(xai, { output: [fcall(13, 'mcp__web__add_numbers', { a: 2, b: 3 })] });
+        await rreply(xai, { output: [fcall(14, 'mcp__wsecho__echo', { text: 'w' })] });
+        await rreply(xai, { text: 'done' });
+        const a0 = posts('approvalRequest').length; const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
+        const q = api.chat.testReceive({ type: 'query', text: 'use the tools' });
+        const c1 = await until(() => posts('approvalRequest')[a0]);
+        assert.deepStrictEqual({ kind: c1.request.kind, server: c1.request.server, tool: c1.request.tool, source: c1.request.source }, { kind: 'mcp', server: 'echo', tool: 'echo', source: 'settings' });
+        assert.match(c1.request.args, /"text": "hi"/);
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: c1.reqId, decision: 'approve', always: true });
+        // Second echo call is always-allowed; next card is the HTTP server's tool.
+        const c2 = await until(() => posts('approvalRequest')[a0 + 1]);
+        assert.strictEqual(c2.request.server, 'web');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: c2.reqId, decision: 'approve' });
+        const c3 = await until(() => posts('approvalRequest')[a0 + 2]);
+        assert.strictEqual(c3.request.source, 'workspace');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: c3.reqId, decision: 'deny' });
+        await q; await idle();
+        const reqs = (await (await fetch(xai + '/requests')).json() as { tools?: { name?: string }[] }[]).slice(r0);
+        assert.ok(reqs[0].tools!.some(t => t.name === 'mcp__echo__echo'));
+        const all = JSON.stringify(reqs);
+        assert.match(all, /mcp_result server=\\"echo\\" tool=\\"echo\\" source=\\"untrusted tool output\\">\\nstdio echo: hi/);
+        assert.match(all, /stdio echo: again/); assert.match(all, /server=\\"web\\" tool=\\"add.numbers\\" source=\\"untrusted tool output\\">\\n5\\n<\/mcp_result>/);
+        assert.match(all, /User declined the MCP tool call wsecho\/echo/);
+        assert.ok(posts('toolEvent').some((e: { label?: string }) => /Called MCP echo › echo/.test(e.label ?? '')));
+      });
+      // Agent off: MCP tools are not offered.
+      await api.chat.testReceive({ type: 'setAgent', enabled: false });
+      await withMock('mock-text', async (x2) => {
+        const r0 = (await (await fetch(x2 + '/requests')).json() as unknown[]).length;
+        await api.chat.testReceive({ type: 'query', text: 'no tools please' }); await idle();
+        const req = (await (await fetch(x2 + '/requests')).json() as { tools?: { name?: string }[] }[])[r0];
+        assert.ok(!req.tools?.some(t => String(t.name).startsWith('mcp__')));
+      });
+      await api.chat.testReceive({ type: 'setAgent', enabled: true });
+    } finally {
+      await api.mcp.resetAlwaysAllow();
+      await vscode.workspace.fs.delete(wsFile);
+      await c.update('mcp.servers', undefined, vscode.ConfigurationTarget.Global);
+      api.mcp.reload(); await api.mcp.ready();
+    }
   });
 });

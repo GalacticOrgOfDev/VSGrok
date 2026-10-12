@@ -629,10 +629,10 @@
     if (!r || approvalCards.has(reqId)) { return; }
     if (r.kind === 'plan') { addPlanCard(reqId, r); return; }
     const wasNear = nearBottom();
-    const card = document.createElement('div'); card.className = 'approval-card'; card.dataset.kind = r.kind === 'command' ? 'command' : 'edit';
+    const card = document.createElement('div'); card.className = 'approval-card'; card.dataset.kind = r.kind === 'command' || r.kind === 'mcp' ? r.kind : 'edit';
     card.setAttribute('role', 'group');
     const head = document.createElement('div'); head.className = 'approval-head';
-    head.textContent = r.kind === 'command' ? '⚡ Grok wants to run a command' : (r.isNew ? '✦ Grok wants to create a file' : '✦ Grok wants to edit a file');
+    head.textContent = r.kind === 'command' ? '⚡ Grok wants to run a command' : r.kind === 'mcp' ? '🔌 Grok wants to use an MCP tool' : (r.isNew ? '✦ Grok wants to create a file' : '✦ Grok wants to edit a file');
     card.setAttribute('aria-label', head.textContent);
     card.appendChild(head);
     if (r.kind === 'command') {
@@ -645,6 +645,12 @@
         const src = document.createElement('div'); src.className = 'approval-meta approval-source' + (r.repoControlled ? ' repo' : '');
         src.textContent = 'From ' + String(r.source) + (r.repoControlled ? ' · repo-controlled: check it before running' : ''); card.appendChild(src);
       }
+    } else if (r.kind === 'mcp') {
+      const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.server || '') + ' › ' + String(r.tool || ''); card.appendChild(p);
+      const src = document.createElement('div'); src.className = 'approval-meta approval-source' + (r.source === 'workspace' ? ' repo' : '');
+      src.textContent = r.source === 'workspace' ? 'Server from .vscode/vsgrok-mcp.json (this repo)' : 'Server from your settings'; card.appendChild(src);
+      const lab = document.createElement('div'); lab.className = 'approval-meta'; lab.textContent = 'Arguments:'; card.appendChild(lab);
+      const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.args || '{}'); card.appendChild(pre);
     } else {
       const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.path || ''); card.appendChild(p);
       const meta = document.createElement('div'); meta.className = 'approval-meta';
@@ -653,9 +659,22 @@
     }
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', fn); actions.appendChild(b); return b; };
-    const decide = (decision) => { card.classList.add('pending'); actions.querySelectorAll('button').forEach(b => (b.disabled = true)); vscode.postMessage({ type: 'approvalResponse', reqId, decision }); holdFocus(card, card.querySelector('.approval-status'), decision === 'approve' ? (r.kind === 'command' ? 'Running…' : 'Applying…') : 'Denying…'); };
-    const ok = mk(r.kind === 'command' ? 'Run' : 'Approve', 'approve', () => decide('approve'));
+    let always = null;
+    const decide = (decision) => {
+      card.classList.add('pending'); actions.querySelectorAll('button,input').forEach(b => (b.disabled = true));
+      const msg = { type: 'approvalResponse', reqId, decision }; if (always && always.checked && decision === 'approve') { msg.always = true; }
+      vscode.postMessage(msg);
+      holdFocus(card, card.querySelector('.approval-status'), decision === 'approve' ? (r.kind === 'command' || r.kind === 'mcp' ? 'Running…' : 'Applying…') : 'Denying…');
+    };
+    const ok = mk(r.kind === 'command' || r.kind === 'mcp' ? 'Run' : 'Approve', 'approve', () => decide('approve'));
     mk('Deny', 'deny', () => decide('deny'));
+    if (r.kind === 'mcp') {
+      const lbl = document.createElement('label'); lbl.className = 'approval-always';
+      always = document.createElement('input'); always.type = 'checkbox';
+      lbl.appendChild(always); lbl.appendChild(document.createTextNode(' Always allow ' + String(r.tool || 'this tool')));
+      lbl.title = 'Run this tool from this server without asking again (until its config changes; reset with VSGrok: MCP Servers)';
+      actions.appendChild(lbl);
+    }
     if (r.kind === 'edit') { mk('View diff', 'diff', () => vscode.postMessage({ type: 'approvalViewDiff', reqId })); }
     card.appendChild(actions);
     const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);

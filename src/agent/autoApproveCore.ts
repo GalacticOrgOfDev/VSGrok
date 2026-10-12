@@ -47,7 +47,7 @@ export function autoDecision(req: ApprovalRequest, ctx: AutoContext): { auto: bo
       if (!commandAllowed(req.command, ctx.allowlist)) { return { auto: false, why: 'command not on the allowlist' }; }
       return { auto: true, why: 'allowlisted command' };
   }
-  return { auto: false, why: 'unknown request' };
+  return { auto: false, why: req.kind === 'mcp' ? 'MCP tools always ask (unless always-allowed)' : 'unknown request' };
 }
 
 /** Task budget check after each model step. Returns a stop reason, or undefined to continue. */

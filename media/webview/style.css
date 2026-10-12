@@ -338,3 +338,5 @@ button.cost-meter:focus-visible{outline:2px solid var(--vscode-focusBorder)}
 .hist-actions .danger{color:var(--vscode-errorForeground)}
 .hist-empty{color:var(--vscode-descriptionForeground);padding:6px 0}
 @media (forced-colors:active){#tabs .tab.active{outline:1px solid Highlight}}
+.approval-always{display:inline-flex;align-items:center;gap:4px;font-size:.92em;color:var(--vscode-descriptionForeground);margin-left:auto;cursor:pointer}
+.approval-card[data-kind=mcp]{border-left:3px solid var(--vscode-charts-purple,#b180d7)}

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0 — 2026-10-12
+**MCP (Model Context Protocol) servers**
+- Configure servers in `vsgrok.mcp.servers` (user settings) or in `.vscode/vsgrok-mcp.json` (`{ "servers": { … } }`; `mcpServers` is accepted too).
+  - **stdio:** `command`, `args`, `env`, `cwd`.
+  - **Streamable HTTP:** `url` and `headers`. Only https is allowed, except plain http on localhost.
+  - `"disabled": true` skips a server.
+- Built on the official `@modelcontextprotocol/sdk` (v1.32) client.
+- **The workspace file is read only in trusted workspaces.** It can't override a server of the same name from your settings. `vsgrok.mcp.servers` is restricted in Restricted Mode.
+- With Agent on, tools from connected servers are offered to Grok as function tools named `mcp__<server>__<tool>`. Their descriptions are labelled as provided by the server and untrusted.
+- **Every call shows an approval card:** server › tool, where the server is configured (settings or this repo), and the JSON arguments, with **Run** / **Deny** and an **Always allow <tool>** checkbox.
+  - Always-allow is remembered per tool and tied to the server's launch config (command/args/cwd/env names or URL), so changing the command resets it.
+  - Run task never auto-approves MCP tools.
+- Results return to Grok inside `<mcp_result … source="untrusted tool output">`, capped at 50,000 characters. Images and audio are summarised, not forwarded.
+- *VSGrok: MCP Servers* lists each server's status (ready / error / disabled), transport, source and tools, plus config errors. It can also reconnect, open your settings or the workspace file (creating a disabled example), and clear "Always allow".
+- Limits: 20 s connect/list timeout, 120 s per call (cancelled by Stop), 20 servers, 100 tools per server.
+
 ## 0.11.0 — 2026-10-12
 **Chat history**
 - Chats are saved locally after every answer (and when you switch, close or start a chat) under VS Code's global storage: one JSON file per chat plus an index, keeping the newest 200 chats.

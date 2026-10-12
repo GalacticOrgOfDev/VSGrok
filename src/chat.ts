@@ -13,6 +13,7 @@ import { TaskTracker, setTaskTracker } from './agent/taskTracker';
 import { sensitivePath } from './agent/planCore';
 import { checkWritable } from './security';
 import { ChatStore, newChatId } from './chatStore';
+import { mcp } from './mcp';
 import { ChatRecord, TranscriptMsg, titleFrom, toMarkdown, slug, transcriptToItems } from './historyCore';
 import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
@@ -812,7 +813,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       } catch { writable = false; }
     }
     const d = autoDecision(req, { level, allowlist, writable });
-    const what = req.kind === 'command' ? `\`${req.command}\`` : req.kind === 'edit' ? req.path : `plan (${req.files.length} files)`;
+    const what = req.kind === 'command' ? `\`${req.command}\`` : req.kind === 'edit' ? req.path : req.kind === 'mcp' ? `${req.server}/${req.tool}` : `plan (${req.files.length} files)`;
     if (d.auto) { t.autoApproved++; } else { t.asked++; }
     this.post({ type: 'taskLog', id: t.id, auto: d.auto, text: d.auto ? `Auto-approved ${what} (${d.why})` : `Asking you: ${what} (${d.why})` });
     this.pushTask();
@@ -892,7 +893,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode };
     this.convMode = mode;
 
-    const fnTools = toResponsesTools(agent ? TOOL_SPECS : READ_TOOL_SPECS);
+    if (agent && mcp()) { await Promise.race([mcp()!.ready(), new Promise(r => setTimeout(r, 3000))]); }
+    const fnTools = [...toResponsesTools(agent ? TOOL_SPECS : READ_TOOL_SPECS), ...(agent ? mcp()?.functionTools() ?? [] : [])];
     const tools: ResponseTool[] = [...fnTools, ...serverTools()];
     let tid = 0; let thinking = '';
     const ids = new Map<string, string>();
@@ -998,7 +1000,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const r = await runToolLoop({
         system: sys,
         history: this.history,
-        tools: agent ? TOOL_SPECS : READ_TOOL_SPECS,
+        tools: agent ? [...TOOL_SPECS, ...(mcp()?.functionTools() ?? []).map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.parameters } }))] : READ_TOOL_SPECS,
         maxSteps,
         isCancelled: () => cts.token.isCancellationRequested || signal.aborted,
         request: async (msgs, tools) => streamChat(msgs, await requestOptions(this.ctx, {
@@ -1088,7 +1090,10 @@ export function toolLabel(name: string, a: unknown, done = false): string {
     case 'get_problems': return `${done ? 'Checked' : 'Checking'} problems${o.path ? ' in ' + s(o.path) : ''}`;
     case 'run_tests': return done ? 'Ran the tests' : 'Running the tests…';
     case 'propose_plan': return `${done ? 'Proposed' : 'Proposing'} a plan (${Array.isArray(o.changes) ? o.changes.length : '?'} files)`;
-    default: return `${name}`;
+    default: {
+      const mm = /^mcp__([A-Za-z0-9_-]+?)__(.+)$/.exec(name);
+      return mm ? `${done ? 'Called' : 'Calling'} MCP ${mm[1]} › ${mm[2]}` : `${name}`;
+    }
   }
 }
 

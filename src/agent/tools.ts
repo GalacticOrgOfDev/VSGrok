@@ -10,6 +10,7 @@ import { checkReadable } from '../security';
 import { getProblemsTool, runTestsTool } from './checks';
 import { proposePlan } from '../planApply';
 import { workspaceIndex } from '../index/workspaceIndex';
+import { mcp } from '../mcp';
 
 function toSignal(token: vscode.CancellationToken): AbortSignal {
   const ac = new AbortController();
@@ -185,7 +186,11 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
         return r.msg;
       }
       case 'run_command': return await runCommand(String(args.command), token);
-      default: return `Unknown tool: ${name}`;
+      default: {
+        const m = mcp();
+        if (m?.isMcpTool(name)) { return await m.call(name, args, token); }
+        return `Unknown tool: ${name}`;
+      }
     }
   } catch (e) {
     return `Error: ${(e as Error).message}`;

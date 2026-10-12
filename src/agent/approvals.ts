@@ -7,9 +7,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export type ApprovalRequest =
   | { kind: 'command'; title?: string; command: string; runs?: string[]; source?: string; repoControlled?: boolean }
   | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number }
+  | { kind: 'mcp'; title?: string; server: string; tool: string; args: string; source?: 'settings' | 'workspace' }
   | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string; warn?: string }[] };
 
-export interface ApprovalDecision { ok: boolean; selected?: number[] }
+export interface ApprovalDecision { ok: boolean; selected?: number[]; /** MCP cards: "Always allow this tool". */ always?: boolean }
 
 export interface ApprovalCardMessage { type: 'approvalRequest'; reqId: string; request: ApprovalRequest }
 export interface ApprovalOptions { signal?: AbortSignal; onViewDiff?: (index?: number) => void | Promise<void> }
@@ -49,7 +50,7 @@ export class ApprovalBroker {
       // Plan cards: only indices of selectable (non-refused) rows count; an approve without any is a deny.
       const selected = ok && Array.isArray(m.selected) ? [...new Set(m.selected.filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < (lim ?? 1000)) as number[])] : undefined;
       if (ok && ((selected && !selected.length) || (lim !== undefined && !selected))) { this.settle(m.reqId, false, 'denied'); return true; }
-      this.settle(m.reqId, ok, ok ? 'approved' : 'denied', selected);
+      this.settle(m.reqId, ok, ok ? 'approved' : 'denied', selected, ok && m.always === true);
       return true;
     }
     if (m?.type === 'approvalViewDiff' && typeof m.reqId === 'string') {
@@ -65,13 +66,13 @@ export class ApprovalBroker {
     for (const id of [...this.pending.keys()]) { this.settle(id, false, reason); }
   }
 
-  private settle(reqId: string, ok: boolean, state: string, selected?: number[]) {
+  private settle(reqId: string, ok: boolean, state: string, selected?: number[], always?: boolean) {
     const p = this.pending.get(reqId);
     if (!p) { return; }
     this.pending.delete(reqId);
     p.cleanup();
     this.post({ type: 'approvalResolved', reqId, state });
-    p.resolve({ ok, selected: ok ? selected : undefined });
+    p.resolve({ ok, selected: ok ? selected : undefined, ...(always ? { always: true } : {}) });
   }
 }
 

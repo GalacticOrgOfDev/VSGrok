@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -169,6 +169,11 @@
       {
         "command": "vsgrok.newChatTab",
         "title": "New Chat Tab",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.mcpServers",
+        "title": "MCP Servers",
         "category": "VSGrok"
       }
     ],
@@ -587,6 +592,47 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Save chats on this machine (VS Code global storage) after each answer so they can be searched, reopened, renamed, deleted and exported. API keys are never saved; text is redacted for secret-looking tokens and images are not kept. Turning this off stops saving; existing chats stay until deleted."
+        },
+        "vsgrok.mcp.servers": {
+          "type": "object",
+          "default": {},
+          "scope": "machine-overridable",
+          "markdownDescription": "MCP servers whose tools Grok may use when Agent is on (every call asks in the chat unless you tick **Always allow** for that tool). Map of name → `{ \"command\", \"args\", \"env\", \"cwd\" }` (stdio) or `{ \"url\", \"headers\" }` (streamable HTTP; https, or http on localhost). `\"disabled\": true` skips one. A workspace can add servers in `.vscode/vsgrok-mcp.json` (`{ \"servers\": { … } }`), used only in trusted workspaces. See *VSGrok: MCP Servers* for status.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "disabled": {
+                "type": "boolean"
+              }
+            }
+          }
         }
       }
     },
@@ -650,12 +696,16 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md, and still never reads .env or credential files. Agent edits and commands always need your approval.",
+      "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md and .vscode/vsgrok-mcp.json, and still never reads .env or credential files. Agent edits and commands always need your approval.",
       "restrictedConfigurations": [
         "vsgrok.testCommand",
         "vsgrok.agent.autoApprove",
-        "vsgrok.agent.commandAllowlist"
+        "vsgrok.agent.commandAllowlist",
+        "vsgrok.mcp.servers"
       ]
     }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
   }
 }

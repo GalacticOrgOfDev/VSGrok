@@ -14,10 +14,26 @@ async function main() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ tag_name: 'v99.0.0', html_url: base + '/rel', body: 'mock', draft: false, prerelease: false,
         assets: [{ name: 'vsgrok-99.0.0.vsix', browser_download_url: base + '/dl/vsgrok-99.0.0.vsix' }] }));
+    } else if (req.url === '/mcp') {
+      void mockMcp(req, res);
     } else if (req.url?.startsWith('/xai/')) {
       mockXai(req, res);
     } else { res.writeHead(404); res.end(); }
   });
+  // Streamable-HTTP MCP server (stateless), same tools as test-int/mcp-echo-server.cjs.
+  async function mockMcp(req: http.IncomingMessage, res: http.ServerResponse) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { build } = require(path.join(root, 'test-int', 'mcp-echo-server.cjs'));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    if (req.headers['x-test-auth'] !== 'ok') { res.writeHead(401); res.end(); return; }
+    let body = ''; for await (const d of req) { body += d; }
+    const server = build('http');
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
+  }
   // Mock xAI API for image input + cost meter tests. Records request bodies at /xai/requests.
   const xaiRequests: unknown[] = [];
   const chatRequests: unknown[] = [];

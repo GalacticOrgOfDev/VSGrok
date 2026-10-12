@@ -9,6 +9,7 @@ import { runEditorAction } from './editorActions';
 import { virtualDiffCount } from './proposals';
 import { GrokInlineProvider } from './inline';
 import { registerInlineEdit } from './inlineEdit';
+import { McpManager, setMcpManager, WORKSPACE_FILE } from './mcp';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
 import { SECRET_KEY, DEFAULT_MODEL, cfg } from './config';
@@ -49,9 +50,33 @@ export function activate(context: vscode.ExtensionContext) {
   reg('vsgrok.fixProblemsHere', () => runEditorAction(chat, 'fix'));
   reg('vsgrok.refactor', (instruction?: string) => runEditorAction(chat, 'refactor', typeof instruction === 'string' ? instruction : undefined));
   const inlineEdit = registerInlineEdit(context);
+  const mcpManager = new McpManager(context);
+  setMcpManager(mcpManager);
+  context.subscriptions.push(mcpManager, { dispose: () => setMcpManager(undefined) });
+  void mcpManager.ready();
+  reg('vsgrok.mcpServers', async () => {
+    await mcpManager.ready();
+    const st = mcpManager.status();
+    type It = vscode.QuickPickItem & { act?: string };
+    const icon: Record<string, string> = { ready: '$(pass)', error: '$(error)', connecting: '$(loading~spin)', disabled: '$(circle-slash)' };
+    const items: It[] = st.servers.map(s => ({ label: `${icon[s.status]} ${s.name}`, description: `${s.type} · ${s.source}${s.status === 'ready' ? ` · ${s.tools.length} tools` : ''}`, detail: s.status === 'error' ? s.error : s.tools.join(', ').slice(0, 300) || undefined }));
+    if (!items.length) { items.push({ label: 'No MCP servers configured', description: 'vsgrok.mcp.servers or ' + WORKSPACE_FILE }); }
+    for (const e of st.errors) { items.push({ label: `$(warning) ${e}` }); }
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, { label: '$(refresh) Reconnect all', act: 'reload' }, { label: '$(settings-gear) Edit user MCP servers', act: 'settings' }, { label: `$(json) Edit ${WORKSPACE_FILE}`, act: 'ws' }, { label: '$(trash) Forget all "Always allow" choices', act: 'reset' });
+    const pick = await vscode.window.showQuickPick(items, { title: 'VSGrok MCP servers', placeHolder: 'Tools from ready servers are offered to Grok when Agent is on; each call asks first.' });
+    if (pick?.act === 'reload') { mcpManager.reload(); }
+    if (pick?.act === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettingsJson', { revealSetting: { key: 'vsgrok.mcp.servers' } }); }
+    if (pick?.act === 'reset') { await mcpManager.resetAlwaysAllow(); vscode.window.setStatusBarMessage('$(check) MCP "Always allow" choices cleared', 4000); }
+    if (pick?.act === 'ws') {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri; if (!root) { return; }
+      const f = vscode.Uri.joinPath(root, WORKSPACE_FILE);
+      try { await vscode.workspace.fs.stat(f); } catch { await vscode.workspace.fs.writeFile(f, Buffer.from(JSON.stringify({ servers: { example: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-everything'], disabled: true } } }, null, 2) + '\n')); }
+      await vscode.window.showTextDocument(f);
+    }
+  });
   const updater = new Updater(context, chat);
   if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) {
-    testApi = { chat, updater, workspaceIndex, inlineEdit };
+    testApi = { chat, updater, workspaceIndex, inlineEdit, mcp: mcpManager };
     reg('vsgrok.__testVirtualDiffCount', () => virtualDiffCount());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     reg('vsgrok.__testRunTool', async (name: string, args: any) => {
