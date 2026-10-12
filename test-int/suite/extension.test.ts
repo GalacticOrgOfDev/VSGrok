@@ -901,4 +901,51 @@ suite('VSGrok in VS Code', () => {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     });
   });
+
+  test('terminal helper: failed command shows the status bar item (no notification); click sends command, exit code and output tail with agent on; success hides; setting turns it off', async () => {
+    const th = api.terminalHelper;
+    th.clear();
+    th.onEnd({ commandLine: 'npm run build', exitCode: 2, cwd: '/w', output: '\x1b[31merror TS2304\x1b[0m: Cannot find name foo\n' });
+    assert.strictEqual(th.visible, true);
+    th.onEnd({ commandLine: 'npm run build', exitCode: 0, output: '' }); assert.strictEqual(th.visible, false, 'a later success hides it');
+    th.onEnd({ commandLine: 'sleep 9', exitCode: 130, output: '' }); assert.strictEqual(th.visible, false, 'Ctrl+C is ignored');
+    th.onEnd({ commandLine: 'npm run build', exitCode: 2, cwd: '/w', output: 'error TS2304: Cannot find name foo\n' });
+    await withMock('mock-text', async (xai) => {
+      await api.chat.testReceive({ type: 'clearChat' }); await idle();
+      await api.chat.testReceive({ type: 'setAgent', enabled: false });
+      await rreply(xai, { text: 'foo is undefined; import it.' });
+      const n0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length; const u0 = posts('userMessage').length;
+      assert.strictEqual(await vscode.commands.executeCommand('vsgrok.askAboutTerminalFailure'), true);
+      await idle();
+      assert.strictEqual(th.visible, false);
+      assert.strictEqual(posts('userMessage')[u0].text, 'Why did `npm run build` fail (exit 2)?');
+      assert.strictEqual(api.chat['agentMode'], true);
+      const reqs = (await (await fetch(xai + '/requests')).json() as unknown[]).slice(n0);
+      const body = JSON.stringify(reqs);
+      assert.match(body, /Exit code: 2/); assert.match(body, /error TS2304: Cannot find name foo/); assert.doesNotMatch(body, /\\u001b\[31m/);
+      assert.match(body, /run_command/);
+    });
+    assert.strictEqual(await vscode.commands.executeCommand('vsgrok.askAboutTerminalFailure'), false);
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('terminalHelper.enabled', false, vscode.ConfigurationTarget.Global);
+    try { th.onEnd({ commandLine: 'make', exitCode: 1, output: '' }); assert.strictEqual(th.visible, false); }
+    finally { await c.update('terminalHelper.enabled', undefined, vscode.ConfigurationTarget.Global); }
+  });
+
+  test('terminal helper: real shell integration (skipped when the shell does not report it)', async function () {
+    this.timeout(40000);
+    const th = api.terminalHelper; th.clear();
+    const term = vscode.window.createTerminal({ name: 'vsgrok-th', shellPath: '/bin/bash' });
+    try {
+      const si = await Promise.race([
+        new Promise<vscode.TerminalShellIntegration>(r => { const d = vscode.window.onDidChangeTerminalShellIntegration(e => { if (e.terminal === term) { d.dispose(); r(e.shellIntegration); } }); }),
+        sleep(15000).then(() => undefined),
+      ]);
+      if (!si) { this.skip(); return; }
+      si.executeCommand('echo vsgrok-oops-output; exit_code_test() { return 3; }; exit_code_test');
+      await until(() => th.visible, 15000);
+      assert.strictEqual(th.lastFailure.exitCode, 3);
+      assert.match(th.lastFailure.output, /vsgrok-oops-output/);
+    } finally { term.dispose(); th.clear(); }
+  });
 });

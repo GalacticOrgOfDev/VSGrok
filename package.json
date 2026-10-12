@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -187,6 +187,11 @@
         "title": "Draft PR Description",
         "category": "VSGrok",
         "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "vsgrok.askAboutTerminalFailure",
+        "title": "Ask Grok About the Failed Terminal Command",
+        "category": "VSGrok"
       }
     ],
     "menus": {
@@ -655,6 +660,11 @@
               }
             }
           }
+        },
+        "vsgrok.terminalHelper.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When a terminal command fails (non-zero exit, via shell integration), show a subtle **Ask Grok** item in the status bar. One click sends the command, exit code and output tail to chat for a diagnosis and a proposed fix through the approval card. No notifications."
         }
       }
     },

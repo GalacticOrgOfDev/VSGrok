@@ -16,6 +16,7 @@ import { SECRET_KEY, DEFAULT_MODEL, cfg } from './config';
 
 export const XAI_CONSOLE_KEYS_URL = 'https://console.x.ai/team/default/api-keys';
 import { buildCommandPrompt, CodeAction, fixDiagnostic, GrokQuickFixProvider } from './commands';
+import { TerminalHelper } from './terminalHelper';
 import { generateCommitMessage, reviewChanges, draftPrDescription } from './git';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -148,6 +149,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (u) { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); await chat.addFileContext(u); }
   });
   reg('vsgrok.generateCommitMessage', (arg?: { rootUri?: vscode.Uri }) => generateCommitMessage(context, arg));
+  const terminalHelper = new TerminalHelper(chat); context.subscriptions.push(terminalHelper);
+  reg('vsgrok.askAboutTerminalFailure', () => terminalHelper.ask());
+  if (testApi) { testApi.terminalHelper = terminalHelper; }
   reg('vsgrok.reviewChanges', (arg?: { rootUri?: vscode.Uri }) => reviewChanges(chat, arg));
   reg('vsgrok.draftPrDescription', (arg?: { rootUri?: vscode.Uri; target?: 'clipboard' | vscode.Uri }) => draftPrDescription(context, arg));
   reg('vsgrok.fixDiagnostic', (uri: vscode.Uri, range: vscode.Range, message: string) => fixDiagnostic(context, uri, range, message));

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.0 — 2026-10-12
+**Terminal helper**
+- When a terminal command exits non-zero (via VS Code shell integration), a subtle **✨ Ask Grok** item appears at the left of the status bar. There is no notification or popup. Its tooltip names the command and exit code. Exit 130 (Ctrl+C) is ignored.
+- One click (or *VSGrok: Ask Grok About the Failed Terminal Command*) sends the command line, exit code, working directory, shell and the last 80 lines / 8 KB of output to chat:
+  - The output is captured from the start of the command (200 KB rolling buffer), with ANSI and shell-integration escapes stripped and key-like strings redacted.
+  - It is framed as data, not instructions.
+  - It is withheld entirely if the command names a secrets file (`cat .env`, `~/.aws/credentials`, …).
+- Agent is switched on for that turn, so Grok's fix comes back as an edit or `run_command` through the approval card.
+- The item hides after a later successful command in the same terminal, when the terminal closes, after 3 minutes, or once clicked.
+- New setting `vsgrok.terminalHelper.enabled` (default on).
+
 ## 0.13.0 — 2026-10-12
 **Git help**
 - **Generate Commit Message** (improved from 0.2):
