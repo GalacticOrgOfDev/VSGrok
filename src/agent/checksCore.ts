@@ -94,7 +94,7 @@ export function parseTestFailures(output: string, cwdHint?: string): Failure[] {
   const out: Failure[] = [];
   const seen = new Set<string>();
   const add = (f: Failure) => { const k = `${f.file}:${f.line}:${f.test}:${f.message.slice(0, 60)}`; if (!seen.has(k) && out.length < 50) { seen.add(k); out.push(f); } };
-  const rel = (p: string) => { let x = p.replace(/\\/g, '/').replace(/^file:\/\//, ''); if (cwdHint) { const c = cwdHint.replace(/\\/g, '/').replace(/\/?$/, '/'); if (x.startsWith(c)) { x = x.slice(c.length); } } return x.replace(/^\.\//, ''); };
+  const rel = (p: string) => { let x = p.replace(/\\/g, '/').replace(/^file:\/\//, ''); if (cwdHint) { const c = cwdHint.replace(/\\/g, '/').replace(/\/?$/, '/'); const win = /^[A-Za-z]:\//.test(c); if (win ? x.toLowerCase().startsWith(c.toLowerCase()) : x.startsWith(c)) { x = x.slice(c.length); } } return x.replace(/^\.\//, ''); };
   // Long (minified) lines are trimmed so the unanchored location regexes stay linear-ish.
   const lines = output.split(/\r?\n/).map(l => l.length > 2000 ? l.slice(0, 2000) : l);
   for (let i = 0; i < lines.length; i++) {
@@ -123,6 +123,8 @@ export function parseTestFailures(output: string, cwdHint?: string): Failure[] {
     // node:test spec reporter: "✖ name (1.2ms)" followed by "  test at file.js:12:3" (failure details are repeated in a summary).
     if ((m = l.match(/^\s*✖\s+(.+?)(?:\s+\([\d.]+m?s\))?\s*$/)) && !/^failing tests:?$/i.test(m[1])) {
       let file: string | undefined, line: number | undefined, msg = 'failed';
+      // Node 23+ summary puts "test at file:line:col" on the line BEFORE "✖ name".
+      const pm = (lines[i - 1] ?? '').match(/^\s*test at (.+?):(\d+):\d+\s*$/); if (pm) { file = rel(pm[1]); line = +pm[2]; }
       for (let j = i + 1; j < Math.min(lines.length, i + 20); j++) {
         const tm = lines[j].match(/^\s*test at (.+?):(\d+):\d+\s*$/); if (tm) { file = rel(tm[1]); line = +tm[2]; continue; }
         if (/^\s*✖|^\s*✔|^ℹ/.test(lines[j])) { break; }

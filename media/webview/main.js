@@ -84,6 +84,30 @@
   }
 
   // Turns are sequential segments in arrival order: text, tool steps / cards, text, … New items never go above earlier text.
+  /** Render ANSI SGR colours (24-bit and basic) from command output as styled spans. Text only; other escapes are dropped. */
+  const ANSI16 = ['0,0,0', '205,49,49', '13,188,121', '229,229,16', '36,114,200', '188,63,188', '17,168,205', '229,229,229'];
+  function ansiFragment(text) {
+    const frag = document.createDocumentFragment();
+    let fg = '', bg = '', bold = false;
+    const re = /\x1b\[([\d;]*)m|\x1b\[[\d;?]*[A-Za-z]/g;
+    let last = 0, mm;
+    const push = (str) => { if (!str) { return; } const sp = document.createElement('span'); sp.textContent = str; if (fg) { sp.style.color = 'rgb(' + fg + ')'; } if (bg) { sp.style.backgroundColor = 'rgb(' + bg + ')'; } if (bold) { sp.style.fontWeight = 'bold'; } frag.appendChild(sp); };
+    while ((mm = re.exec(text))) {
+      push(text.slice(last, mm.index)); last = re.lastIndex;
+      if (mm[1] === undefined) { continue; }
+      const c = mm[1] === '' ? [0] : mm[1].split(';').map((x) => Math.min(255, parseInt(x, 10) || 0));
+      for (let i = 0; i < c.length; i++) {
+        const n = c[i];
+        if (n === 0) { fg = ''; bg = ''; bold = false; }
+        else if (n === 1) { bold = true; } else if (n === 22) { bold = false; }
+        else if ((n === 38 || n === 48) && c[i + 1] === 2 && i + 4 < c.length) { const v = c[i + 2] + ',' + c[i + 3] + ',' + c[i + 4]; if (n === 38) { fg = v; } else { bg = v; } i += 4; }
+        else if (n >= 30 && n <= 37) { fg = ANSI16[n - 30]; } else if (n === 39) { fg = ''; }
+        else if (n >= 40 && n <= 47) { bg = ANSI16[n - 40]; } else if (n === 49) { bg = ''; }
+      }
+    }
+    push(text.slice(last));
+    return frag;
+  }
   function closeText(t) {
     if (!t.body) { return; }
     if (t.timer) { cancelAnimationFrame(t.timer); t.timer = null; }
@@ -882,6 +906,24 @@
         announce.textContent = v.title + '. ' + v.body;
         break;
       }
+      case 'demoStart': {
+        const pend = state.pending; state.pending = null;
+        if (pend && !input.value.trim()) { input.value = pend.text; autoGrow(); }
+        const est = '$' + Number(m.estimate).toFixed(2);
+        const lines = ['Estimated cost: about ' + est + ' (grok-4.7 list prices, low reasoning effort). Hard limit: $' + Number(m.limit).toFixed(2) + '; it pauses there with a Continue / Stop card.',
+          'You will approve each step: the plan, the test runs, the fix and the CLI run.'];
+        if (m.agentOff) { lines.push('Agent is off; Start turns it on (every write and command still asks).'); }
+        if (m.searchOff && m.searchOff.length) { lines.push(m.searchOff.join(' and ') + ' search is off in the header, so that step will be skipped.'); }
+        const fin = (c, msg, type) => { c.querySelectorAll('button').forEach((x) => (x.disabled = true)); c.querySelector('.approval-status').textContent = msg; vscode.postMessage({ type }); };
+        const card = infoCard('demo-start', 'Run the VSGrok demo?', lines, [
+          { label: 'Start demo (est. ' + est + ')', action: 'start', primary: true, fn: (b, c) => { input.value = ''; autoGrow(); fin(c, 'Starting the demo.', 'demoConfirm'); } },
+          { label: 'Cancel', action: 'cancel', fn: (b, c) => fin(c, 'Demo cancelled. Nothing was sent.', 'demoCancel') },
+        ]);
+        card.dataset.kind = 'note';
+        const primary = card.querySelector('.approval-btn.approve'); if (primary) { primary.focus({ preventScroll: true }); }
+        announce.textContent = 'Run the VSGrok demo? Estimated cost about ' + est + '.';
+        break;
+      }
       case 'demoBudget': {
         const spent = typeof m.spent === 'number' ? '$' + m.spent.toFixed(2) + ' so far, as reported by xAI' : 'xAI reported no cost, so a token estimate was used';
         const body = 'The demo paused at its $' + Number(m.limit).toFixed(2) + ' budget (' + spent + '). Continue with $' + Number(m.step).toFixed(2) + ' more, or stop here.';
@@ -923,7 +965,11 @@
         sm.textContent = (m.state === 'running' ? '◌ ' : m.state === 'error' ? '✕ ' : '✓ ') + String(m.label || m.text || '');
         if (typeof m.detail === 'string') {
           let pre = d.querySelector('pre'); if (!pre) { pre = document.createElement('pre'); d.appendChild(pre); }
-          pre.textContent = m.detail;
+          pre.textContent = '';
+          if (m.detail.includes('\x1b[')) {
+            pre.appendChild(ansiFragment(m.detail));
+            if (/\x1b\[[\d;]*48;2;/.test(m.detail)) { d.open = true; d.classList.add('has-swatches'); } // colour output (e.g. the demo CLI): show it
+          } else { pre.textContent = m.detail; }
         }
         break;
       }

@@ -77,8 +77,8 @@ test('0.14.2: demo doc is bundled, addressed to Grok, and keeps approvals', asyn
   const fs = await import('node:fs');
   const md = fs.readFileSync('docs/DEMO.md', 'utf8');
   assert.match(md, /^# VSGrok demo: instructions for Grok/);
-  for (const t of ['get_workspace_overview', 'find_relevant_files', 'propose_plan', 'run_tests', 'get_problems', 'propose_edit', 'Web search', 'X search', 'cost meter', 'palette/']) { assert.ok(md.includes(t), t); }
-  assert.match(md, /under \$1/); assert.match(md, /\$0\.80/); assert.match(md, /exactly one web search and one X search/);
+  for (const t of ['get_workspace_overview', 'find_relevant_files', 'propose_plan', 'run_tests', 'get_problems', 'propose_edit', 'Web search', 'X search', 'cost meter', 'commit-buddy/', '--dry-run', 'Start demo']) { assert.ok(md.includes(t), t); }
+  assert.match(md, /under \$1/); assert.match(md, /\$0\.80/); assert.match(md, /Never call the real xAI API from commit-buddy/);
   assert.match(md, /approval stays in place/i);
   assert.match(md, /## For the human: recording tips/);
   assert.match(fs.readFileSync('.vscodeignore', 'utf8'), /^!docs\/DEMO\.md$/m);

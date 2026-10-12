@@ -35,3 +35,24 @@ export function addSpend(a: DemoSpend, b: DemoSpend): DemoSpend {
   return { input: a.input + b.input, cached: a.cached + b.cached, output: a.output + b.output, costUsd: a.costUsd + b.costUsd, costMissing: a.costMissing || b.costMissing };
 }
 export const ZERO_SPEND: DemoSpend = { input: 0, cached: 0, output: 0, costUsd: 0, costMissing: false };
+
+/**
+ * Pre-flight estimate. Token counts were measured from the full scripted demo in the mock integration test
+ * ("demo e2e"): request sizes at ~4 chars/token, chained with prompt caching, plus allowances the mock can't see
+ * (low-effort reasoning per call, search results pulled into context). Prices: grok-4.7 list (docs.x.ai/developers/pricing).
+ */
+export const DEMO_PRICES = { input: 2, cached: 0.5, output: 6, webSearchCall: 0.005, xPost: 0.005 };
+/*
+ * Measured in the mock e2e run of the commit-buddy demo (10 calls): ~74.7k billed input tokens of which ~64.7k cacheable,
+ * ~3.2k output. Conservative allowances on top (the mock can't see these):
+ *   - low-effort reasoning: 1.5k output tokens per call -> +15k output
+ *   - web + X search results: 20k uncached input each -> +40k, carried as context into the 6 later calls -> +120k cacheable
+ *   - half of the cacheable tokens miss the cache -> moved to uncached
+ * => uncached ≈ 10k + 40k + (64.7k + 120k) / 2 ≈ 142k, cached ≈ 92k, output ≈ 18k -> about $0.44 in tokens + $0.055 search fees.
+ */
+export const DEMO_EST_TOKENS = { input: 142_000, cached: 92_000, output: 18_000, calls: 10 };
+export function demoEstimateUsd(t: { input: number; cached: number; output: number } = DEMO_EST_TOKENS): number {
+  const p = DEMO_PRICES;
+  const tokens = (t.input * p.input + t.cached * p.cached + t.output * p.output) / 1e6;
+  return tokens + p.webSearchCall + 10 * p.xPost;
+}

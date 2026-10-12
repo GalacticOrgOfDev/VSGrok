@@ -445,3 +445,43 @@ test('0.14.3: demo budget card offers Continue (+$0.50) / Stop and posts the cho
   (c.querySelector('button') as HTMLButtonElement).click();
   assert.equal(sent.at(-1).type, 'demoContinue');
 });
+
+test('0.14.4: ANSI colours in command output render as styled spans (no markup injection)', () => {
+  const { d, post } = boot();
+  post({ type: 'streamStart', id: 'z1' });
+  post({ type: 'toolEvent', id: 'z1', toolId: 'r1', state: 'done', label: 'Ran', detail: 'exit code 0\n\x1b[48;2;59;130;246m  <b>x</b>  \x1b[0m #3b82f6' });
+  const det = d.querySelector('[data-tool-id="r1"]') as HTMLDetailsElement;
+  const span = det.querySelector('pre span[style]') as HTMLElement;
+  assert.equal(span.style.backgroundColor, 'rgb(59, 130, 246)');
+  assert.equal(det.querySelector('pre b'), null);
+  assert.ok(det.open);
+  assert.ok(!det.querySelector('pre')!.textContent!.includes(String.fromCharCode(27)));
+});
+
+test('0.14.4: replay of the recorded demo e2e posts: every card lands at the bottom when it appears, in order', async () => {
+  const { w, d, post } = boot();
+  let revealed = 0; w.HTMLElement.prototype.scrollIntoView = function () { revealed++; };
+  const posts = JSON.parse(fs.readFileSync(path.join(root, 'src', 'test', 'fixtures', 'demo-posts.json'), 'utf8'));
+  const kinds: string[] = [];
+  for (const m of posts) {
+    post(m);
+    if (m.type === 'streamChunk') { await new Promise(r => setTimeout(r, 2)); }
+    if (m.type === 'approvalRequest') {
+      const msgs = d.getElementById('messages')!;
+      const last = msgs.lastElementChild!;
+      const deepest = last.lastElementChild!.lastElementChild!; // turn > newest segment > newest item
+      assert.ok(deepest.classList.contains('approval-card'), `card ${m.request.kind} is the newest item`);
+      kinds.push(m.request.kind);
+    }
+  }
+  await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual(kinds, ['plan', 'command', 'edit', 'command', 'command']);
+  assert.ok(revealed >= 5, String(revealed));
+  const turn = d.querySelector('.message.assistant')!;
+  const segs = Array.from(turn.children).filter(c => !c.classList.contains('who') && !c.classList.contains('msg-footer'));
+  assert.ok(segs.at(-1)!.classList.contains('body'), 'final text is the last segment');
+  assert.match(segs.at(-1)!.textContent!, /Summary: 5 files/);
+  // The pre-flight card came first, before the turn.
+  const all = Array.from(d.getElementById('messages')!.children);
+  assert.ok(all.findIndex(e => e.classList.contains('demo-start')) < all.indexOf(turn));
+});

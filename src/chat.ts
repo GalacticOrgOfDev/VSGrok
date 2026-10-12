@@ -1,6 +1,6 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
 import { parseFileLink } from './gitCore';
-import { DEMO_LIMITS, DEMO_STEP, DEMO_STOP_PREFIX, isDemoTrigger, demoOverBudget, addSpend, ZERO_SPEND, DemoSpend } from './chatDemo';
+import { demoEstimateUsd, DEMO_LIMITS, DEMO_STEP, DEMO_STOP_PREFIX, isDemoTrigger, demoOverBudget, addSpend, ZERO_SPEND, DemoSpend } from './chatDemo';
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
 import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL, apiMode, serverTools } from './config';
@@ -473,6 +473,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'stop': this.stop(); break;
       case 'demoContinue': await this.demoContinue(); break;
       case 'demoStop': this.demo = undefined; break;
+      case 'demoConfirm': await this.demoConfirm(); break;
+      case 'demoCancel': this.demoPreflight = undefined; break;
       case 'runTask': if (typeof m.text === 'string') { await this.runTask(m.text); } break;
       case 'undoTask': if (typeof m.id === 'string') { await this.undoTask(m.id); } break;
       case 'regenerate': if (this.lastUser && !this.busy) {
@@ -595,7 +597,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (images.length && await this.visionGate()) { return; }
     const names = Array.isArray(rawNames) ? kept.map(i => rawNames[i] ?? '').map(n => String(n).replace(/\p{Cc}/gu, '').slice(0, 80)) : [];
     this.pendingImageNames = names;
+    // Demo pre-flight: show the estimate and wait for an explicit Start before spending anything.
+    if (!this.task && isDemoTrigger(text) && apiMode() === 'responses') {
+      const c = cfg();
+      this.demoPreflight = { text, images: images.length ? images : undefined, names };
+      this.post({ type: 'demoStart', estimate: demoEstimateUsd(), limit: DEMO_LIMITS.maxCostUsd, agentOff: !this.agentMode,
+        searchOff: [!c.get('tools.webSearch') ? 'Web' : '', !c.get('tools.xSearch') ? '𝕏' : ''].filter(Boolean) });
+      return;
+    }
+    this.demoPreflight = undefined;
     await this.send(text, images.length ? images : undefined);
+  }
+  private demoPreflight?: { text: string; images?: string[]; names: string[] };
+  private async demoConfirm() {
+    const p = this.demoPreflight;
+    if (!p || this.busy) { return; }
+    if (!this.agentMode) { this.agentMode = true; this.pushSettings(); } // the demo builds files: Agent must be on (cards still ask)
+    this.pendingImageNames = p.names;
+    this.demoPreflight = undefined;
+    await this.send(p.text, p.images);
   }
   private pendingImageNames: string[] = [];
 
@@ -984,6 +1004,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           tools: ts,
           maxOutputTokens: base.maxTokens,
           store,
+          promptCacheKey: this.convId,
+          // Demo: lowest documented reasoning effort to keep the run cheap.
+          ...(demo ? { reasoningEffort: 'low' as const } : {}),
           // With store=false the encrypted reasoning must come back to us so it can be resent (docs: reasoning#encrypted-reasoning-content).
           include: store ? undefined : ['reasoning.encrypted_content'],
           onContent: (delta) => this.post({ type: 'streamChunk', id: aid, delta }),

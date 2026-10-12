@@ -1,0 +1,57 @@
+TAP version 13
+# Subtest: hex to hsl to hex round trip
+ok 1 - hex to hsl to hex round trip
+  ---
+  duration_ms: 1.348721
+  ...
+# Subtest: pads single-digit channels
+ok 2 - pads single-digit channels
+  ---
+  duration_ms: 0.152301
+  ...
+# Subtest: triad is three hues 120 degrees apart
+ok 3 - triad is three hues 120 degrees apart
+  ---
+  duration_ms: 0.872918
+  ...
+# Subtest: rejects invalid input
+ok 4 - rejects invalid input
+  ---
+  duration_ms: 0.39003
+  ...
+# Subtest: complementary of red
+not ok 5 - complementary of red
+  ---
+  duration_ms: 1.619655
+  location: '/w/palette/test/color.test.js:23:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + '#00ffff'
+    - '#00ff00'
+            ^
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '#00ff00'
+  actual: '#00ffff'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/w/palette/test/color.test.js:24:10)
+    Test.runInAsyncScope (node:async_hooks:206:9)
+    Test.run (node:internal/test_runner/test:796:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:526:18)
+    Test.postRun (node:internal/test_runner/test:889:19)
+    Test.run (node:internal/test_runner/test:835:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 4
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 106.744775

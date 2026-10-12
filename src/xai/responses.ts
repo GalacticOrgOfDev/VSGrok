@@ -43,6 +43,8 @@ export interface ResponsesRequest extends TransportOptions {
   /** text.format, e.g. {type:'json_schema', name, schema, strict:true} (structured outputs). */
   textFormat?: Record<string, unknown>;
   maxTurns?: number;
+  /** Routes a conversation's requests to the same server so prompt caching hits (docs.x.ai: prompt_cache_key). */
+  promptCacheKey?: string;
   onContent?: (delta: string) => void;
   onReasoning?: (delta: string) => void;
   /** Server-side tool activity (web_search_call, x_search_call, code_interpreter_call, …). */
@@ -74,6 +76,7 @@ export function buildResponsesPayload(r: ResponsesRequest): Record<string, unkno
   if (r.include?.length) { p.include = r.include; }
   if (r.textFormat) { p.text = { format: r.textFormat }; }
   if (r.maxTurns) { p.max_turns = r.maxTurns; }
+  if (r.promptCacheKey) { p.prompt_cache_key = r.promptCacheKey; }
   return p;
 }
 

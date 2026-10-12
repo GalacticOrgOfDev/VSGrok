@@ -1,0 +1,39 @@
+✔ hex to hsl to hex round trip (1.071747ms)
+✔ pads single-digit channels (0.16996ms)
+✔ triad is three hues 120 degrees apart (0.719656ms)
+✔ rejects invalid input (0.364235ms)
+✖ complementary of red (0.924757ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 60.150414
+
+✖ failing tests:
+
+test at test/color.test.js:23:1
+✖ complementary of red (0.924757ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + '#00ffff'
+  - '#00ff00'
+          ^
+  
+      at TestContext.<anonymous> (/w/palette/test/color.test.js:24:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '#00ffff',
+    expected: '#00ff00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

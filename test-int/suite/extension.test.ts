@@ -718,6 +718,103 @@ suite('VSGrok in VS Code', () => {
   });
 
   // ---------- 0.11.0: chat history + tabs ----------
+  test('demo e2e: the full DEMO.md run with every prescribed tool, approvals in order, real commit-buddy files pass after the fix', async function () {
+    this.timeout(120000);
+    await withMock('grok-4.7', async (xai) => {
+      const chat = api.chat;
+      const c = vscode.workspace.getConfiguration('vsgrok');
+      await c.update('tools.webSearch', true, vscode.ConfigurationTarget.Global);
+      await c.update('tools.xSearch', true, vscode.ConfigurationTarget.Global);
+      await c.update('responses.store', true, vscode.ConfigurationTarget.Global);
+      const root = vscode.workspace.workspaceFolders![0].uri;
+      const dirUri = vscode.Uri.joinPath(root, 'commit-buddy');
+      const fs = await import('fs');
+      const demo = fs.readFileSync(path.join(chat['ctx'].extensionUri.fsPath, 'docs', 'DEMO.md'), 'utf8');
+      const files: Record<string, string> = {};
+      for (const m of demo.matchAll(/`<dir>\/([^`]+)`[^\n]*\n````\w*\n([\s\S]*?)\n````/g)) { files[m[1]] = m[2] + '\n'; }
+      const fixed = demo.match(/\*\*Fixed test file\*\*[^\n]*\n````\w*\n([\s\S]*?)\n````/)![1] + '\n';
+      assert.deepStrictEqual(Object.keys(files).sort(), ['README.md', 'bin/commit-buddy.js', 'package.json', 'src/core.js', 'test/core.test.js']);
+      files['README.md'] = files['README.md'].replace('FACT_FROM_WEB_SEARCH', 'Node.js 24 is the Active LTS line.');
+      let n = 0; const fc = (name: string, args: unknown) => ({ type: 'function_call', id: `fcx${++n}`, call_id: `cx${n}`, name, arguments: JSON.stringify(args), status: 'completed' });
+      const script: unknown[] = [
+        { output: [fc('read_extension_doc', { name: 'DEMO.md' })] },
+        { output: [fc('get_workspace_overview', {})] },
+        { output: [fc('find_relevant_files', { query: 'git commit message CLI', max: 3 })] },
+        { output: [{ type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'Node.js active LTS' } }, { type: 'x_search_call', id: 'xs_1', status: 'completed' },
+          fc('propose_plan', { summary: 'commit-buddy: AI commit messages CLI', changes: Object.entries(files).map(([p, content]) => ({ op: 'create', path: `commit-buddy/${p}`, content })) })] },
+        { output: [fc('run_tests', { path: 'commit-buddy' })] },
+        { output: [fc('get_problems', { path: 'commit-buddy', max: 5 })] },
+        { output: [fc('propose_edit', { path: 'commit-buddy/test/core.test.js', content: fixed, reason: 'env files are secrets' })] },
+        { output: [fc('run_tests', { path: 'commit-buddy' })] },
+        { output: [fc('run_command', { command: 'git add commit-buddy && node commit-buddy/bin/commit-buddy.js --dry-run' })] },
+        { text: '```\nfeat: add commit-buddy CLI\n\n- secret filtering\n- CLI\n- tests\n```\nSummary: 5 files, 6 tests (one fixed), dry run, 2 searches. See the cost meter.' },
+      ];
+      for (const r of script) { await rreply(xai, r); }
+      await chat.testReceive({ type: 'clearChat' }); await idle();
+      const p0 = chat.testPosts.length; const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
+      await chat.testReceive({ type: 'query', text: 'hey grok, execute the demo' }); await idle();
+      assert.ok(posts('demoStart').length);
+      const confirmed = chat.testReceive({ type: 'demoConfirm' });
+      // Approve every card as it appears (like Timothy clicking), in order.
+      const kinds: string[] = []; let seen = posts('approvalRequest').length;
+      const approver = (async () => {
+        for (;;) {
+          const all = posts('approvalRequest');
+          while (seen < all.length) {
+            const card = all[seen++]; kinds.push(card.request.kind === 'command' ? `command:${card.request.command}` : card.request.kind);
+            await chat.testReceive(card.request.kind === 'plan' ? { type: 'approvalResponse', reqId: card.reqId, decision: 'approve', selected: card.request.files.map((_: unknown, i: number) => i) } : { type: 'approvalResponse', reqId: card.reqId, decision: 'approve' });
+          }
+          if (!chat['busy'] && kinds.length >= 5) { return; }
+          await sleep(50);
+        }
+      })();
+      await confirmed; await idle(); await Promise.race([approver, sleep(5000)]);
+      try {
+        assert.deepStrictEqual(kinds, ['plan', 'command:npm test', 'edit', 'command:npm test', 'command:git add commit-buddy && node commit-buddy/bin/commit-buddy.js --dry-run']);
+        type Req = { input: { type?: string; call_id?: string; output?: string }[]; tools?: { name?: string; type?: string }[]; reasoning?: { effort?: string }; prompt_cache_key?: string };
+        const reqs = (await (await fetch(xai + '/requests')).json() as Req[]).slice(r0);
+        assert.strictEqual(reqs.length, script.length);
+        assert.ok(reqs.every(r => r.reasoning?.effort === 'low'), 'demo runs at low reasoning effort');
+        assert.ok(reqs.every(r => typeof r.prompt_cache_key === 'string' && r.prompt_cache_key.length >= 8), 'prompt_cache_key set');
+        const out = (id: string) => reqs.flatMap(r => r.input).find(i => i.type === 'function_call_output' && i.call_id === id)!.output!;
+        assert.match(out('cx1'), /instructions for Grok/);
+        assert.match(out('cx4'), /Applied/);
+        assert.match(out('cx5'), /Ran `npm test` in commit-buddy\/ \(node:test, from commit-buddy\/package\.json scripts\.test\): exit code 1\.\n1 failure\(s\):\n- test\/core\.test\.js:40 \[treats \.env\.production as a secret\]/);
+        assert.match(out('cx7'), /^Applied/);
+        assert.match(out('cx8'), /exit code 0\.\nAll tests passed\./);
+        assert.match(out('cx9'), /^exit code 0\n\[dry run\] model: grok-4\.20-0309-non-reasoning\n\[dry run\] \d+ diff chars/);
+        assert.match(out('cx9'), /prompt starts:\nWrite a Conventional Commits message/);
+        assert.doesNotMatch(out('cx9'), /XAI_API_KEY is not set/);
+        // Files on disk are exactly DEMO.md's (with the fix).
+        for (const [p, content] of Object.entries(files)) {
+          const disk = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(dirUri, p))).toString();
+          assert.strictEqual(disk, p === 'test/core.test.js' ? fixed : content, p);
+        }
+        // UI: no budget card, no error; tool steps and cards arrive in order; swatch output is sent for colour rendering.
+        const turn = chat.testPosts.slice(p0);
+        assert.strictEqual(turn.filter((m: { type: string }) => m.type === 'demoBudget' || m.type === 'streamError').length, 0);
+        const seq = turn.filter((m: { type: string; state?: string }) => (m.type === 'toolEvent' && m.state === 'running') || m.type === 'approvalRequest')
+          .map((m: { type: string; label?: string; request?: { kind: string } }) => m.type === 'approvalRequest' ? `card:${m.request!.kind}` : String(m.label).split(' ')[0]);
+        const order = seq.join(' > ');
+        for (const want of [/Reading/, /card:plan/, /card:command/, /card:edit/, /card:command/, /card:command/]) { assert.match(order, want); }
+        assert.ok(order.indexOf('card:plan') < order.indexOf('card:edit'));
+        // Measure for the pre-flight estimate (printed; see chatDemo.ts DEMO_EST_TOKENS).
+        const toolsChars = JSON.stringify(reqs[0].tools ?? []).length;
+        const outChars = script.map(r => JSON.stringify(r).length);
+        let ctx = 0, input = 0, cached = 0, prev = 0;
+        reqs.forEach((r, k) => { ctx += JSON.stringify(r.input).length + (k ? outChars[k - 1] : 0); const tok = (toolsChars + ctx) / 4; input += tok; cached += prev; prev = tok; });
+        const output = outChars.reduce((a, b) => a + b, 0) / 4;
+        fs.mkdirSync(path.join(__dirname, '..', '..', '.out'), { recursive: true });
+        fs.writeFileSync(path.join(__dirname, '..', '..', '.out', 'demo-measure.json'), JSON.stringify({ calls: reqs.length, toolsTokens: toolsChars / 4, input: Math.round(input), cached: Math.round(cached), output: Math.round(output), lastContext: Math.round(prev) }, null, 1));
+        fs.writeFileSync(path.join(__dirname, '..', '..', '.out', 'demo-posts.json'), JSON.stringify(turn.filter((m: { type: string }) => m.type !== 'costMeter')));
+      } finally {
+        try { (await import('child_process')).execFileSync('git', ['rm', '-r', '-q', '--cached', '--ignore-unmatch', 'commit-buddy'], { cwd: root.fsPath }); } catch { /* not staged */ }
+        await vscode.workspace.fs.delete(dirUri, { recursive: true });
+        for (const k of ['tools.webSearch', 'tools.xSearch', 'responses.store']) { await c.update(k, undefined, vscode.ConfigurationTarget.Global); }
+      }
+    });
+  });
+
   test('0.14.3: run_tests with path detects the nearest package.json and runs there (node --test, TAP parsed)', async () => {
     const root = vscode.workspace.workspaceFolders![0].uri;
     const dir = vscode.Uri.joinPath(root, 'palette-int');
@@ -749,6 +846,7 @@ suite('VSGrok in VS Code', () => {
       await rreply(xai, { text: 'Paused summary.', usage: { input_tokens: 10, output_tokens: 10, cost_in_usd_ticks: 1 } });
       const n0 = posts('demoBudget').length;
       await chat.testReceive({ type: 'query', text: 'run the demo' }); await idle();
+      assert.ok(posts('demoStart').length, 'pre-flight card first'); await chat.testReceive({ type: 'demoConfirm' }); await idle();
       const card = await until(() => posts('demoBudget')[n0]);
       assert.strictEqual(card.limit, 1); assert.strictEqual(card.step, 0.5);
       // Continue: the same demo continues with a $1.50 cap.
@@ -770,7 +868,11 @@ suite('VSGrok in VS Code', () => {
     assert.match(bad, /^Refused/);
     await withMock('mock-text', async (xai) => {
       await api.chat.testReceive({ type: 'clearChat' }); await idle();
+      const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
       await vscode.commands.executeCommand('vsgrok.runDemo'); await idle();
+      assert.strictEqual((await (await fetch(xai + '/requests')).json() as unknown[]).length, r0, 'nothing is sent before Start');
+      const pre = posts('demoStart').at(-1); assert.ok(pre.estimate > 0 && pre.estimate < 1, String(pre.estimate));
+      await api.chat.testReceive({ type: 'demoConfirm' }); await idle();
       const last = (await (await fetch(xai + '/requests')).json() as { input: unknown[]; tools?: { name?: string }[] }[]).at(-1)!;
       assert.match(JSON.stringify(last.input), /execute the demo/);
       assert.match(JSON.stringify(last.input), /read_extension_doc with name \\"DEMO.md\\"/);

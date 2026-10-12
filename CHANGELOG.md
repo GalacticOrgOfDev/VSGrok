@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.14.4 — 2026-10-12
+
+**Demo: commit-buddy**
+- **The demo now builds commit-buddy.** It's a zero-dependency Node 18+ CLI that writes Conventional Commits messages for staged changes with the user's own `XAI_API_KEY`.
+  - Options: `--apply` (asks y/N), `--model` and `--dry-run`.
+  - It withholds secret-looking files, truncates large diffs, and exits cleanly with no staged changes, no key, or outside a repository.
+  - Its tests use node:test with a fake fetch.
+- **DEMO.md gives Grok the exact files**, so it copies known-good code instead of improvising, with one deliberately wrong test to fix.
+  - A unit test extracts those files and checks that exactly one test fails, all pass after the fix, and the dry run works without a key.
+- **No real API calls on camera:** commit-buddy only runs with `--dry-run` during the demo.
+- **Pre-flight card:** "execute the demo" or **VSGrok: Run Demo** first shows **Run the VSGrok demo? · Start demo (est. $0.49) / Cancel**. Nothing is sent until Start. Start turns Agent on (every write and command still asks) and warns if Web or 𝕏 search is off.
+  - The estimate comes from token counts measured in a full mock run of the demo, plus conservative allowances for reasoning, search results and cache misses, at grok-4.7 list prices.
+- **Cheaper demo turns:** they use the lowest documented reasoning effort (`reasoning.effort: "low"`).
+
+**Fixed**
+- **Responses requests now send `prompt_cache_key`** (the conversation id). xAI recommends it for reliable cache hits; without it, chained turns could pay full input price.
+- **Node 23+ test output:** the "test at file:line" line comes *before* "✖ name", and is now parsed. Output from Node 18, 20, 22 and 24 is covered by fixtures.
+  - Windows drive-letter case differences (`e:` vs `E:`) no longer break relative paths.
+- **Coloured command output:** ANSI colours (24-bit and basic) in command output are shown as colours in the tool step, instead of raw escape codes.
+- **New end-to-end test:** a headless VS Code test runs the whole demo against the mock xAI server, with every prescribed tool and every approval card in order. It checks that the files on disk match DEMO.md, that the failure is parsed to `test/core.test.js:40`, that the tests go green, that the dry run works, and that no budget card or error appears. A webview test replays its recorded messages to check that each card is the newest item when it appears.
+
 ## 0.14.3 — 2026-10-12
 
 **Fixed**

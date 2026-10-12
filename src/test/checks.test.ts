@@ -155,3 +155,16 @@ test('0.14.3: parses node:test TAP (Windows paths, error: |- block) and the spec
   const g = parseTestFailures(spec, '/w/palette');
   assert.equal(g.length, 1); assert.equal(g[0].file, 'test/color.test.js'); assert.equal(g[0].line, 25); assert.match(g[0].message, /strictly equal/);
 });
+
+test('0.14.4: node:test output from Node 18/20/22 (TAP) and 24 (spec, "test at" before ✖) all parse to file:line', async () => {
+  const { parseTestFailures } = await import('../agent/checksCore');
+  const fs = await import('node:fs'); const path = await import('node:path');
+  for (const v of ['18', '20', '22', '24']) {
+    const out = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', `node${v}.txt`), 'utf8');
+    const f = parseTestFailures(out, '/w/palette');
+    assert.equal(f.length, 1, v); assert.equal(f[0].file, 'test/color.test.js', v); assert.equal(f[0].line, 23, v); assert.equal(f[0].test, 'complementary of red', v);
+  }
+  // Windows drive-letter case differences between VS Code (e:) and Node (E:) still relativise.
+  const w = parseTestFailures("not ok 1 - x\n  ---\n  location: 'E:\\AI Projects\\palette\\test\\a.test.js:3:1'\n  ...", 'e:\\AI Projects\\palette');
+  assert.equal(w[0].file, 'test/a.test.js');
+});
