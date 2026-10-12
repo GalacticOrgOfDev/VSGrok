@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1 — 2026-10-12
+- Fix: unit-test script failed on Node 22 in CI (`node --test` with a directory); now passes explicit test files. The v0.6.0 tag's release workflow stopped at this step, so 0.6.1 is the first published 0.6 build. No extension code changes.
+
 ## 0.6.0 — 2026-10-12
 **Robustness**
 - Integration tests in real VS Code (`@vscode/test-electron`, headless via xvfb): activation, every contributed command registered, chat webview ready, approval-card round trip (approve / deny / Stop), project rules, workspace index (ranking, `.gitignore`, `.env` never read, incremental update), update check against a mocked release, Copy Diagnostics.

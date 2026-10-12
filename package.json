@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -364,8 +364,8 @@
     "package": "pnpm run check-types && pnpm run lint && node esbuild.mjs --production",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "tsc -p tsconfig.test.json && node --test out-test/test/",
-    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/",
+    "test": "tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
+    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
     "test:integration": "node esbuild.mjs && tsc -p tsconfig.int.json && node out-int/test-int/runTest.js",
     "test:all": "pnpm run test:unit && pnpm run test:integration"
   },
