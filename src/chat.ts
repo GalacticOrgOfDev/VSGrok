@@ -170,6 +170,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
 <button id="cost-meter" type="button" class="cost-meter" hidden aria-describedby="cost-detail" aria-expanded="false" aria-controls="cost-pop"></button><span id="cost-detail" class="sr-only"></span>
 <button id="rules-chip" type="button" class="rules-chip" hidden aria-label="Project rules"></button>
+<button id="task-pill" type="button" class="h-btn task-pill" hidden></button>
+<button id="mcp-btn" type="button" class="h-btn mcp-btn" hidden></button>
 <button id="history-btn" type="button" class="h-btn icon" aria-label="Chat history" title="Chat history: search, reopen, rename, delete, export" aria-controls="history-panel" aria-expanded="false">🕘</button>
 <button id="settings-btn" type="button" class="h-btn icon" aria-label="Settings" aria-controls="settings-panel" aria-expanded="false">⚙</button>
 <button id="clear-btn" type="button" class="h-btn" aria-label="New chat">New</button></div></header>
@@ -183,7 +185,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div class="slider-row"><label for="temperature">Temperature</label><input type="range" id="temperature" min="0" max="2" step="0.05"><span class="val" id="temperature-val"></span></div>
 <div class="slider-row"><label for="maxTokens">Max tokens</label><input type="range" id="maxTokens" min="256" max="32768" step="256"><span class="val" id="maxTokens-val"></span></div>
 <div class="slider-row cost-row" id="cost-row" hidden><span class="lbl">This chat</span><span id="cost-row-val"></span><button id="cost-row-details" type="button" class="h-btn link">details</button></div>
-<div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button></div></div>
+<div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button><button id="mcp-settings-link" type="button" class="h-btn link">MCP servers…</button></div></div>
 <div id="history-panel" role="region" aria-label="Chat history" hidden><div class="hist-top"><input id="history-search" type="search" placeholder="Search chats…" aria-label="Search chats"><button id="history-export" type="button" class="h-btn" title="Export the current chat to Markdown">Export .md</button></div><ul id="history-list" aria-label="Saved chats"></ul></div>
 <div id="tabs" role="tablist" aria-label="Open chats"></div>
 <div id="messages-wrap"><div id="messages" role="log" aria-live="polite"></div><button id="new-output" class="pill" hidden>↓ New output</button><div id="sr-announce" class="sr-only" aria-live="polite"></div></div>
@@ -450,7 +452,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'ready': {
         this.ready = true;
         this.approvals.cancelAll('panel reloaded');
-        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); this.pushProblems(); void this.pushKeyState(); void this.pushModels(); this.pushTabs();
+        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); this.pushProblems(); void this.pushKeyState(); void this.pushModels(); this.pushTabs(); this.pushMcp();
         if (this.transcript.length) { this.showTranscript(); }
         this.readyWaiters.splice(0).forEach(r => r());
         this.onViewReady?.();
@@ -535,6 +537,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('workbench.action.openSettings', key);
         break;
       }
+      case 'mcpServers': await vscode.commands.executeCommand('vsgrok.mcpServers'); break;
       case 'openFileLink': if (typeof m.href === 'string') { await this.openFileLink(m.href); } break;
       case 'openLink': if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) { await vscode.env.openExternal(vscode.Uri.parse(m.url)); } break;
     }
@@ -623,6 +626,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     for (const u of (picked ?? []).slice(0, 8)) { await this.sendImageFile(u, false); }
   }
 
+  /** Header MCP button: only when a server failed or repo servers wait for consent. */
+  toastIfVisible(msg: string) { if (this.view?.visible) { this.post({ type: 'toast', msg }); } }
+  pushMcp() {
+    const m = mcp(); if (!m) { return; }
+    const st = m.status();
+    this.post({ type: 'mcpState', errors: st.servers.filter(s => s.status === 'error').length, pending: st.servers.filter(s => s.status === 'needsConsent').length });
+  }
   private pushMeter() { this.post({ type: 'costMeter', ...meterView(this.meter) }); }
 
   /** Fetch (or reuse cached) model list and send it to the dropdown. */
@@ -745,23 +755,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Called by commands: focus the view, wait for the webview handshake, then send. */
-  async injectQuery(text: string, opts: { agent?: boolean; hidden?: string; display?: string } = {}) {
+  async injectQuery(text: string, opts: { agent?: boolean; hidden?: string; display?: string; sent?: { label: string; items: string[] } } = {}) {
     await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
     await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
     if (opts.agent !== undefined) { this.agentMode = opts.agent; this.pushSettings(); }
-    await this.send(text, undefined, { hidden: opts.hidden, display: opts.display });
+    await this.send(text, undefined, { hidden: opts.hidden, display: opts.display, sent: opts.sent });
   }
 
   stop() { this.abort?.abort(); this.cts?.cancel(); this.approvals.cancelAll('cancelled'); }
 
   /** extra.hidden is appended to what Grok sees (e.g. a diff) without filling the bubble; extra.display replaces the bubble text. */
-  private async send(text: string, images?: string[], extra: { hidden?: string; display?: string } = {}) {
+  private async send(text: string, images?: string[], extra: { hidden?: string; display?: string; sent?: { label: string; items: string[] } } = {}) {
     if (this.busy) { this.post({ type: 'toast', msg: 'Grok is still answering — press Stop first.' }); return; }
     if (!text.trim() && !images?.length) { return; }
     this.busy = true;
     const id = `m${++this.seq}`;
     const attached = [...this.contexts, ...(this.implicitSel ? [this.implicitSel] : [])];
-    this.post({ type: 'userMessage', id, text: extra.display ?? text, chips: attached.map(c => this.chipOf(c)), images, imageNames: images?.length ? this.pendingImageNames : undefined });
+    this.post({ type: 'userMessage', id, sent: extra.sent, text: extra.display ?? text, chips: attached.map(c => this.chipOf(c)), images, imageNames: images?.length ? this.pendingImageNames : undefined });
     this.contexts = []; this.pushContexts();
     this.lastUser = { text, images, hidden: extra.hidden, display: extra.display };
     let full = await this.resolveTags(text);

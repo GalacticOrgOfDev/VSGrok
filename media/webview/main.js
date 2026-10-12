@@ -87,6 +87,7 @@
     const wasNear = nearBottom();
     const r = md(t.raw, t.state === 'streaming');
     t.body.innerHTML = r.html;
+    t.body.querySelectorAll('a[href]').forEach((a) => { if (!a.title) { a.title = a.getAttribute('href'); } });
     decorateBlocks(t.body, r.open);
     if (t.state === 'streaming') { const last = t.body.lastElementChild; if (last) { last.classList.add('caret'); } else { t.body.classList.add('caret'); } }
     stick(wasNear);
@@ -172,7 +173,7 @@
     }
   }
 
-  function addUser(text, chips, images, names) {
+  function addUser(text, chips, images, names, sent) {
     const el = document.createElement('div'); el.className = 'message user';
     const t = document.createElement('div'); t.className = 'user-text'; t.textContent = text; el.appendChild(t);
     if (images && images.length) {
@@ -188,6 +189,13 @@
       el.appendChild(row);
     }
     if (chips && chips.length) { const row = document.createElement('div'); row.className = 'mini-chips'; chips.forEach((c) => row.appendChild(chipEl(c, false))); el.appendChild(row); }
+    if (sent && sent.label) {
+      // What was attached for Grok but not shown in the bubble (git diff, terminal output).
+      const d = document.createElement('details'); d.className = 'sent-data';
+      const s = document.createElement('summary'); s.textContent = String(sent.label); d.appendChild(s);
+      const pre = document.createElement('pre'); pre.textContent = (sent.items || []).map(String).join('\n'); pre.tabIndex = 0; d.appendChild(pre);
+      el.appendChild(d);
+    }
     messagesEl.appendChild(el); messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
@@ -263,7 +271,8 @@
   function setSendMode(streaming) {
     sendBtn.classList.toggle('stop', streaming);
     sendBtn.textContent = streaming ? '■' : '➤';
-    sendBtn.setAttribute('aria-label', streaming ? 'Stop generating' : 'Send');
+    sendBtn.setAttribute('aria-label', streaming ? 'Stop generating' : state.taskMode ? 'Start task' : 'Send');
+    sendBtn.title = streaming ? '' : state.taskMode ? 'Start task' : '';
   }
   function stop() {
     if (!state.streaming) { return; }
@@ -345,11 +354,29 @@
   const taskBtn = $('task-toggle');
   function setTaskMode(on) {
     state.taskMode = !!on; taskBtn.setAttribute('aria-pressed', String(state.taskMode));
+    if (!state.streaming) { sendBtn.setAttribute('aria-label', state.taskMode ? 'Start task' : 'Send'); sendBtn.title = state.taskMode ? 'Start task' : ''; }
     input.placeholder = state.taskMode ? 'Describe the task for Grok to run on its own… (Enter to start)' : input.dataset.ph || input.placeholder;
   }
   input.dataset.ph = input.placeholder;
   taskBtn.addEventListener('click', () => { setTaskMode(!state.taskMode); input.focus(); });
   const taskCards = new Map();
+  const mcpBtn = $('mcp-btn');
+  mcpBtn.addEventListener('click', () => vscode.postMessage({ type: 'mcpServers' }));
+  $('mcp-settings-link').addEventListener('click', () => vscode.postMessage({ type: 'mcpServers' }));
+  function renderMcp(m) {
+    const errors = m.errors | 0, pending = m.pending | 0;
+    mcpBtn.hidden = !errors && !pending;
+    mcpBtn.textContent = pending ? '🛡 MCP' : '⚠ MCP';
+    mcpBtn.setAttribute('aria-label', pending ? pending + ' MCP server(s) from this repo wait for your consent. Review' : errors + ' MCP server(s) failed. Show MCP servers');
+    mcpBtn.title = mcpBtn.getAttribute('aria-label');
+  }
+  const taskPill = $('task-pill');
+  function renderTaskPill() {
+    const t = state.task;
+    taskPill.hidden = !t;
+    if (t) { taskPill.textContent = '▶ Task · ' + t.steps + '/' + t.maxSteps; taskPill.setAttribute('aria-label', 'Running task: ' + t.goal + '. Step ' + t.steps + ' of ' + t.maxSteps + '. Show the task card'); }
+  }
+  taskPill.addEventListener('click', () => { const c = state.task && taskCards.get(state.task.id); if (c) { c.scrollIntoView({ block: 'nearest' }); const b = c.querySelector('button'); if (b) { b.focus({ preventScroll: true }); } } });
   function taskCard(m) {
     const wasNear = nearBottom();
     const card = document.createElement('div'); card.className = 'approval-card task-card'; card.dataset.state = 'running';
@@ -357,18 +384,21 @@
     const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = '▶ Task running'; card.appendChild(head);
     const goal = document.createElement('div'); goal.className = 'task-goal'; goal.textContent = VSGrokCards.firstLine(m.goal, 160); card.appendChild(goal);
     const lvl = document.createElement('div'); lvl.className = 'approval-meta'; lvl.textContent = VSGrokCards.levelLabel(m.level) + '. Deletes, renames, other commands and files outside the workspace always ask.'; card.appendChild(lvl);
-    const prog = document.createElement('div'); prog.className = 'task-progress'; prog.setAttribute('role', 'status');
+    const prog = document.createElement('div'); prog.className = 'task-progress'; // not live: announced via #sr-announce, throttled
     prog.textContent = VSGrokCards.taskProgressText({ steps: 0, maxSteps: m.maxSteps, tokens: 0 }); card.appendChild(prog);
     const cur = document.createElement('div'); cur.className = 'task-current'; card.appendChild(cur);
     const log = document.createElement('ul'); log.className = 'task-log'; log.setAttribute('aria-label', 'Approvals in this task'); card.appendChild(log);
     const files = document.createElement('ul'); files.className = 'plan-files'; files.hidden = true; card.appendChild(files);
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const stopB = document.createElement('button'); stopB.className = 'approval-btn deny'; stopB.textContent = 'Stop task'; stopB.dataset.action = 'stop';
-    stopB.addEventListener('click', () => { stopB.disabled = true; stop(); });
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite');
+    stopB.addEventListener('click', () => { stopB.disabled = true; holdFocus(card, status, 'Stopping…'); stop(); });
     actions.appendChild(stopB); card.appendChild(actions);
-    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    card.appendChild(status);
     messagesEl.appendChild(card); stick(wasNear);
     taskCards.set(String(m.id), card);
+    state.task = { id: String(m.id), goal: VSGrokCards.firstLine(m.goal, 60), steps: 0, maxSteps: m.maxSteps | 0, lastAnnounce: Date.now() };
+    renderTaskPill();
     announce.textContent = 'Task started';
   }
   function taskEnd(m) {
@@ -383,10 +413,21 @@
     ul.hidden = !files.length;
     const actions = card.querySelector('.approval-actions'); actions.innerHTML = '';
     if (files.length) {
-      const u = document.createElement('button'); u.className = 'approval-btn deny'; u.textContent = 'Undo all (' + files.length + ')'; u.dataset.action = 'undo-all';
-      u.addEventListener('click', () => { u.disabled = true; card.querySelector('.approval-status').textContent = 'Undoing…'; vscode.postMessage({ type: 'undoTask', id: String(m.id) }); });
+      const label = 'Undo all (' + files.length + ')';
+      const u = document.createElement('button'); u.className = 'approval-btn deny'; u.textContent = label; u.dataset.action = 'undo-all';
+      u.addEventListener('click', () => {
+        // Destructive across N files: second click confirms (same pattern as history Delete).
+        if (!u.dataset.confirm) {
+          u.dataset.confirm = '1'; u.textContent = 'Confirm undo (' + files.length + ')'; announce.textContent = 'Press again to undo ' + files.length + ' files';
+          setTimeout(() => { if (u.isConnected && !u.disabled) { delete u.dataset.confirm; u.textContent = label; } }, 4000);
+          return;
+        }
+        u.disabled = true; card.querySelector('.approval-status').textContent = 'Undoing…'; vscode.postMessage({ type: 'undoTask', id: String(m.id) });
+      });
       actions.appendChild(u);
     }
+    if (state.task && state.task.id === String(m.id)) { state.task = null; renderTaskPill(); }
+    releaseFocus(card);
     announce.textContent = card.querySelector('.approval-head').textContent;
   }
   $('attach-image').addEventListener('click', () => vscode.postMessage({ type: 'pickImage' }));
@@ -424,17 +465,24 @@
   // ---- tabs + history ----
   const tabsEl = $('tabs');
   function renderTabs(tabs, active) {
+    // Keep keyboard focus in the strip across re-renders (UIGrok H): refocus the active tab.
+    const hadFocus = tabsEl.contains(document.activeElement);
     tabsEl.innerHTML = '';
     tabs.forEach((t) => {
       const wrap = document.createElement('div'); wrap.className = 'tab' + (t.id === active ? ' active' : '');
       const b = document.createElement('button'); b.type = 'button'; b.className = 'tab-btn'; b.setAttribute('role', 'tab');
+      b.id = 'tab-' + t.id; b.setAttribute('aria-controls', 'messages-wrap');
       b.setAttribute('aria-selected', String(t.id === active)); b.tabIndex = t.id === active ? 0 : -1;
       b.textContent = VSGrokCards.firstLine(t.title, 28) || 'New chat'; b.title = t.title; b.dataset.id = t.id;
+      b.setAttribute('aria-label', t.title || 'New chat');
       b.addEventListener('click', () => vscode.postMessage({ type: 'switchTab', id: t.id }));
       b.addEventListener('keydown', (e) => {
         const bs = [...tabsEl.querySelectorAll('.tab-btn')]; const i = bs.indexOf(b);
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const n = bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length]; n.focus(); }
-        if (e.key === 'Delete') { e.preventDefault(); vscode.postMessage({ type: 'closeTab', id: t.id }); }
+        let n = null;
+        if (e.key === 'ArrowRight') { n = bs[(i + 1) % bs.length]; } else if (e.key === 'ArrowLeft') { n = bs[(i + bs.length - 1) % bs.length]; }
+        else if (e.key === 'Home') { n = bs[0]; } else if (e.key === 'End') { n = bs[bs.length - 1]; }
+        if (n) { e.preventDefault(); n.focus(); return; }
+        if (e.key === 'Delete' && tabs.length > 1) { e.preventDefault(); vscode.postMessage({ type: 'closeTab', id: t.id }); }
       });
       const x = document.createElement('button'); x.type = 'button'; x.className = 'tab-close'; x.textContent = '×'; x.setAttribute('aria-label', 'Close ' + (t.title || 'chat') + ' (stays in history)');
       x.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'closeTab', id: t.id }); });
@@ -443,6 +491,10 @@
     const add = document.createElement('button'); add.type = 'button'; add.className = 'tab-add'; add.textContent = '+'; add.setAttribute('aria-label', 'New chat tab');
     add.addEventListener('click', () => vscode.postMessage({ type: 'newTab' }));
     tabsEl.appendChild(add);
+    const sel = tabsEl.querySelector('.tab-btn[aria-selected=true]');
+    const wrapEl = $('messages-wrap');
+    if (sel) { wrapEl.setAttribute('role', 'tabpanel'); wrapEl.setAttribute('aria-labelledby', sel.id); if (sel.scrollIntoView) { sel.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } }
+    if (hadFocus && sel) { sel.focus({ preventScroll: true }); }
   }
   const hp = $('history-panel'); const hs = $('history-search'); const hl = $('history-list'); const hb = $('history-btn');
   let histTimer = null;
@@ -456,7 +508,7 @@
   $('history-export').addEventListener('click', () => vscode.postMessage({ type: 'exportChat' }));
   function renderHistory(items, query) {
     hl.innerHTML = '';
-    if (!items.length) { const li = document.createElement('li'); li.className = 'hist-empty'; li.textContent = query ? 'No chats match "' + query + '".' : 'No saved chats yet. Chats are saved on this machine after each answer.'; hl.appendChild(li); return; }
+    if (!items.length) { const li = document.createElement('li'); li.className = 'hist-empty'; li.textContent = query ? 'No chats match "' + query + '".' : 'No saved chats yet. Chats are saved on this computer after each answer.'; hl.appendChild(li); return; }
     for (const it of items) {
       const li = document.createElement('li'); li.className = 'hist-item'; li.dataset.id = it.id;
       const open = document.createElement('button'); open.type = 'button'; open.className = 'hist-open';
@@ -472,6 +524,7 @@
       const del = mk('Delete', 'Delete', () => {
         if (del.dataset.confirm) { vscode.postMessage({ type: 'deleteChat', id: it.id }); return; }
         del.dataset.confirm = '1'; del.textContent = 'Confirm delete'; del.classList.add('danger');
+        announce.textContent = 'Press again to delete ' + it.title;
         setTimeout(() => { if (del.isConnected) { delete del.dataset.confirm; del.textContent = 'Delete'; del.classList.remove('danger'); } }, 4000);
       });
       li.appendChild(open); li.appendChild(acts); hl.appendChild(li);
@@ -486,7 +539,7 @@
       t.raw = String(m.text || '');
       finishTurn(t, m.state === 'stopped' ? 'stopped' : 'done', {});
     }
-    if (msgs.length && msgs[msgs.length - 1].role === 'user') { /* last turn had no answer */ }
+    if (msgs.length) { const n0 = document.createElement('div'); n0.className = 'transcript-note'; n0.setAttribute('role', 'note'); n0.textContent = 'Reopened chat · tool steps and cards aren’t shown'; messagesEl.insertBefore(n0, messagesEl.firstChild); }
     messagesEl.scrollTop = messagesEl.scrollHeight;
     announce.textContent = msgs.length ? 'Chat opened: ' + msgs.length + ' messages' : 'New chat';
   }
@@ -547,6 +600,12 @@
     delete card.dataset.heldFocus;
     const a = document.activeElement;
     if (!a || a === document.body || card.contains(a)) { input.focus({ preventScroll: true }); }
+  }
+  /** Cards raised while a task runs are visibly tied to it. */
+  function markInTask(card) {
+    if (!state.task) { return; }
+    card.classList.add('in-task'); card.dataset.task = state.task.id;
+    const n = document.createElement('div'); n.className = 'approval-meta task-of'; n.textContent = 'Part of task: ' + state.task.goal; card.appendChild(n);
   }
   function pathNodes(el, p) {
     VSGrokCards.pathParts(p).forEach((seg, i, all) => { el.appendChild(document.createTextNode(seg)); if (i < all.length - 1) { el.appendChild(document.createElement('wbr')); } });
@@ -640,6 +699,7 @@
     const wasNear = nearBottom();
     const card = document.createElement('div'); card.className = 'approval-card'; card.dataset.kind = r.kind === 'command' || r.kind === 'mcp' ? r.kind : 'edit';
     card.setAttribute('role', 'group');
+    markInTask(card);
     const head = document.createElement('div'); head.className = 'approval-head';
     head.textContent = r.kind === 'command' ? '⚡ Grok wants to run a command' : r.kind === 'mcp' ? '🔌 Grok wants to use an MCP tool' : (r.isNew ? '✦ Grok wants to create a file' : '✦ Grok wants to edit a file');
     card.setAttribute('aria-label', head.textContent);
@@ -659,7 +719,7 @@
       const src = document.createElement('div'); src.className = 'approval-meta approval-source' + (r.source === 'workspace' ? ' repo' : '');
       src.textContent = r.source === 'workspace' ? 'Server defined by this repo (you allowed it)' : 'Server from your user settings'; card.appendChild(src);
       const lab = document.createElement('div'); lab.className = 'approval-meta'; lab.textContent = 'Arguments:'; card.appendChild(lab);
-      const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.args || '{}'); card.appendChild(pre);
+      const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.args || '{}'); pre.tabIndex = 0; pre.setAttribute('aria-label', 'Arguments'); card.appendChild(pre);
     } else {
       const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.path || ''); card.appendChild(p);
       const meta = document.createElement('div'); meta.className = 'approval-meta';
@@ -670,21 +730,24 @@
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'approval-btn ' + cls; b.textContent = label; b.addEventListener('click', fn); actions.appendChild(b); return b; };
     let always = null;
-    const decide = (decision) => {
-      card.classList.add('pending'); actions.querySelectorAll('button,input').forEach(b => (b.disabled = true));
-      const msg = { type: 'approvalResponse', reqId, decision }; if (always && always.checked && decision === 'approve') { msg.always = true; }
-      vscode.postMessage(msg);
-      holdFocus(card, card.querySelector('.approval-status'), decision === 'approve' ? (r.kind === 'command' || r.kind === 'mcp' ? 'Running…' : 'Applying…') : 'Denying…');
-    };
-    const ok = mk(r.kind === 'command' || r.kind === 'mcp' ? 'Run' : 'Approve', 'approve', () => decide('approve'));
-    mk('Deny', 'deny', () => decide('deny'));
-    if (r.kind === 'mcp') {
-      const lbl = document.createElement('label'); lbl.className = 'approval-always';
+    // MCP "Always allow": its own row above the buttons (before Run in tab order), scope in visible text, never for repo servers.
+    if (r.kind === 'mcp' && r.source !== 'workspace') {
+      const row = document.createElement('label'); row.className = 'approval-always';
       always = document.createElement('input'); always.type = 'checkbox';
-      lbl.appendChild(always); lbl.appendChild(document.createTextNode(' Always allow ' + String(r.tool || 'this tool')));
-      lbl.title = 'Run this tool from this server without asking again (until its config changes; reset with VSGrok: MCP Servers)';
-      actions.appendChild(lbl);
+      row.appendChild(always); row.appendChild(document.createTextNode(' Always allow ' + String(r.tool || 'this tool') + ' from ' + String(r.server || 'this server') + ' (until its config changes)'));
+      card.appendChild(row);
     }
+    const decide = (decision) => {
+      card.classList.add('pending'); actions.querySelectorAll('button,input').forEach(b => (b.disabled = true)); if (always) { always.disabled = true; }
+      const al = !!(always && always.checked && decision === 'approve');
+      const msg = { type: 'approvalResponse', reqId, decision }; if (al) { msg.always = true; }
+      vscode.postMessage(msg);
+      holdFocus(card, card.querySelector('.approval-status'), decision === 'approve' ? (r.kind === 'command' || r.kind === 'mcp' ? (al ? 'Running… · always allowed. Reset in VSGrok: MCP Servers' : 'Running…') : 'Applying…') : 'Denying…');
+    };
+    const runLabel = r.kind === 'command' || r.kind === 'mcp' ? 'Run' : 'Approve';
+    const ok = mk(runLabel, 'approve', () => decide('approve'));
+    mk('Deny', 'deny', () => decide('deny'));
+    if (always) { always.addEventListener('change', () => { ok.textContent = always.checked ? 'Run & always allow' : runLabel; }); }
     if (r.kind === 'edit') { mk('View diff', 'diff', () => vscode.postMessage({ type: 'approvalViewDiff', reqId })); }
     card.appendChild(actions);
     const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
@@ -763,7 +826,7 @@
         setToggle('web-toggle', m.webSearch, m.api === 'chat'); setToggle('x-toggle', m.xSearch, m.api === 'chat'); break;
       case 'models': setModelOptions(m.models || [], m.current); modelIn.title = 'Grok model' + (m.source === 'fallback' ? ' (built-in list: ' + (m.error || 'offline') + ')' : m.source === 'live' ? ' (live from xAI)' : ''); break;
       case 'keyState': $('welcome').hidden = !!m.hasKey; document.body.classList.toggle('no-key', !m.hasKey); break;
-      case 'userMessage': addUser(m.text, m.chips, m.images, m.imageNames); state.pending = null; if (m.images && m.images.length) { state.images = []; renderImageTray(); } break;
+      case 'userMessage': addUser(m.text, m.chips, m.images, m.imageNames, m.sent); state.pending = null; if (m.images && m.images.length) { state.images = []; renderImageTray(); } break;
       case 'imageFile': if (typeof m.dataUrl === 'string') { void addImages([{ dataUrl: m.dataUrl, name: String(m.name || 'image') }]); } break;
       case 'imagesRefused': toast('Image not attached: ' + (m.reasons || []).map(String).join('; ')); break;
       case 'visionNote': {
@@ -897,6 +960,7 @@
       case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }
       case 'toast': toast(m.msg); break;
       case 'taskStart': taskCard(m); break;
+      case 'mcpState': renderMcp(m); break;
       case 'openHistory': setHistory(true); break;
       case 'tabs': renderTabs(m.tabs || [], m.active); break;
       case 'historyItems': renderHistory(m.items || [], String(m.query || '')); break;
@@ -904,6 +968,10 @@
       case 'taskProgress': {
         const card = taskCards.get(String(m.id)); if (!card) { break; }
         card.querySelector('.task-progress').textContent = VSGrokCards.taskProgressText(m);
+        if (state.task && state.task.id === String(m.id)) {
+          const stepChanged = (m.steps | 0) !== state.task.steps; state.task.steps = m.steps | 0; renderTaskPill();
+          if (stepChanged && Date.now() - state.task.lastAnnounce >= 10000) { state.task.lastAnnounce = Date.now(); announce.textContent = 'Task step ' + (m.steps | 0) + ' of ' + (m.maxSteps | 0); }
+        }
         if (m.label) { card.querySelector('.task-current').textContent = '→ ' + String(m.label); }
         break;
       }

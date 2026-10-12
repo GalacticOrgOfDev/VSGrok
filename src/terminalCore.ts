@@ -58,13 +58,15 @@ export function isHelpableFailure(exitCode: number | undefined): exitCode is num
 
 export interface Failure { commandLine: string; exitCode: number; cwd?: string; output: string; shell?: string; at: number }
 
-export function failurePrompt(f: Failure): { text: string; hidden: string; display: string } {
+export function failurePrompt(f: Failure): { text: string; hidden: string; display: string; lines: number; preview: string } {
   const cmd = redact(f.commandLine.trim()).slice(0, 2000);
   const secret = touchesSecret(f.commandLine);
   const tail = secret ? { text: '(output withheld: the command touches a secrets file)', cut: false } : outputTail(f.output);
   const short = cmd.length > 80 ? cmd.slice(0, 77) + '…' : cmd;
   return {
     display: `Why did \`${short}\` fail (exit ${f.exitCode})?`,
+    lines: tail.text ? tail.text.split('\n').length : 0,
+    preview: tail.text || '(no output captured)',
     text: [
       `A terminal command failed. Diagnose the most likely cause from the command, exit code and output below, in a few sentences. Then propose a fix: if it is a code or config change, use the edit tools; if it is a command, use the run_command tool. Both go through my approval card, so do not ask me to confirm in text. Don't re-run the failing command unchanged unless that is the fix. If the output doesn't contain enough to tell, say what to check.`,
       `Command: ${cmd}`, `Exit code: ${f.exitCode}`, f.cwd ? `Working directory: ${f.cwd}` : '', f.shell ? `Shell: ${f.shell}` : '',

@@ -103,3 +103,9 @@ export function driverOverrides(configOut: string): string[] {
   }
   return [...keys].flatMap(k => ['-c', k]);
 }
+
+export function diffLineStats(diff: string): { added: number; removed: number } {
+  let added = 0, removed = 0;
+  for (const l of diff.split('\n')) { if (l.startsWith('+') && !l.startsWith('+++')) { added++; } else if (l.startsWith('-') && !l.startsWith('---')) { removed++; } }
+  return { added, removed };
+}

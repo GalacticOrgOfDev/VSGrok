@@ -68,7 +68,7 @@ export class TerminalHelper implements vscode.Disposable {
     if (!f) { vscode.window.setStatusBarMessage('VSGrok: no failed terminal command to ask about', 3000); return false; }
     this.clear();
     const p = failurePrompt(f);
-    await this.chat.injectQuery(p.text, { agent: true, hidden: p.hidden, display: p.display });
+    await this.chat.injectQuery(p.text, { agent: true, hidden: p.hidden, display: p.display, sent: { label: `terminal output · ${p.lines} line${p.lines === 1 ? '' : 's'}`, items: [p.preview] } });
     return true;
   }
 

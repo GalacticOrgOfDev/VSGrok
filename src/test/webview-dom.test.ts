@@ -297,7 +297,10 @@ test('task mode: toggle sends runTask; progress card updates, logs approvals, en
   assert.match(card.textContent!, /Auto-approving workspace edits\. Deletes, renames/);
   post({ type: 'taskProgress', id: 't1', steps: 2, maxSteps: 40, tokens: 12345, costUsd: 0.0123, autoApproved: 1, asked: 0, label: 'Running the tests…' });
   assert.equal(card.querySelector('.task-progress')!.textContent, 'Step 2 of 40 · 12k tokens · $0.012 · 1 auto-approved');
-  assert.equal(card.querySelector('.task-progress')!.getAttribute('role'), 'status');
+  assert.equal(card.querySelector('.task-progress')!.getAttribute('role'), null, 'not a live region (UIGrok H)');
+  assert.equal(d.getElementById('task-pill')!.hidden, false); assert.match(d.getElementById('task-pill')!.textContent!, /2\/40/);
+  post({ type: 'approvalRequest', reqId: 'rt', request: { kind: 'command', command: 'rm -rf build' } });
+  const tc = d.querySelector('.approval-card.in-task') as HTMLElement; assert.ok(tc); assert.match(tc.textContent!, /Part of task: add a CLI flag/);
   assert.equal(card.querySelector('.task-current')!.textContent, '→ Running the tests…');
   for (let i = 0; i < 10; i++) { post({ type: 'taskLog', id: 't1', auto: i % 2 === 0, text: 'x' + i }); }
   assert.equal(card.querySelectorAll('.task-log li').length, 8);
@@ -307,6 +310,8 @@ test('task mode: toggle sends runTask; progress card updates, logs approvals, en
   assert.equal(card.querySelector('[data-action="stop"]'), null);
   const undo = card.querySelector('[data-action="undo-all"]') as HTMLButtonElement;
   assert.equal(undo.textContent, 'Undo all (2)');
+  assert.equal(d.getElementById('task-pill')!.hidden, true);
+  undo.click(); assert.ok(!sent.some(m => m.type === 'undoTask'), 'first click only arms'); assert.equal(undo.textContent, 'Confirm undo (2)');
   undo.click(); assert.ok(sent.some(m => m.type === 'undoTask' && m.id === 't1'));
   post({ type: 'taskUndone', id: 't1', ok: true, msg: 'Restored 2 file(s).' });
   assert.equal(card.dataset.state, 'undone');
@@ -351,12 +356,20 @@ test('MCP approval card: server › tool, source, arguments, Always allow sends 
   assert.equal(card.querySelector('.approval-path')!.textContent, 'github › create_issue');
   assert.match(card.querySelector('.approval-source')!.textContent!, /defined by this repo/); assert.ok(card.querySelector('.approval-source.repo'));
   assert.match(card.querySelector('pre')!.textContent!, /"title": "x"/);
-  const cb = card.querySelector('.approval-always input') as HTMLInputElement;
-  assert.match(card.querySelector('.approval-always')!.textContent!, /Always allow create_issue/);
-  cb.checked = true;
-  ([...card.querySelectorAll('button')].find(b => b.textContent === 'Run') as HTMLButtonElement).click();
-  const m = sent.find(x => x.type === 'approvalResponse');
+  assert.equal(card.querySelector('.approval-always'), null, 'no always-allow for repo servers');
+  assert.equal((card.querySelector('pre') as HTMLElement).tabIndex, 0);
+  post({ type: 'approvalRequest', reqId: 'm2', request: { kind: 'mcp', server: 'gh', tool: 'list', args: '{}', source: 'settings' } });
+  const c2 = [...d.querySelectorAll('.approval-card[data-kind=mcp]')][1] as HTMLElement;
+  const row = c2.querySelector('.approval-always') as HTMLElement;
+  assert.match(row.textContent!, /Always allow list from gh \(until its config changes\)/);
+  const btns = [...c2.querySelectorAll('input,button')]; assert.ok(btns.indexOf(row.querySelector('input')!) < btns.findIndex(b => b.textContent === 'Run'), 'checkbox before Run in tab order');
+  const cb = row.querySelector('input') as HTMLInputElement;
+  cb.checked = true; cb.dispatchEvent(new (cb.ownerDocument.defaultView as any).Event('change'));
+  const run = [...c2.querySelectorAll('button')].find(b => b.textContent === 'Run & always allow') as HTMLButtonElement; assert.ok(run);
+  run.click();
+  const m = sent.find(x => x.type === 'approvalResponse' && x.reqId === 'm2');
   assert.equal(m.decision, 'approve'); assert.equal(m.always, true); assert.equal(cb.disabled, true);
+  assert.match(c2.querySelector('.approval-status')!.textContent!, /always allowed/);
 });
 
 test('answer links: workspace paths post openFileLink, http opens externally, other schemes are inert', async () => {
@@ -369,4 +382,28 @@ test('answer links: workspace paths post openFileLink, http opens externally, ot
   const byText = (t: string) => links.find(a => a.textContent === t)!;
   byText('a.ts:2').click(); byText('docs').click(); byText('bad')?.click();
   assert.deepEqual(JSON.parse(JSON.stringify(sent.filter(m => m.type === 'openFileLink' || m.type === 'openLink'))), [{ type: 'openFileLink', href: 'src/a.ts#L2' }, { type: 'openLink', url: 'https://x.ai/d' }]);
+});
+
+test('UIGrok 0.14.1: tab focus kept + tabpanel, Delete ignored on a single tab, sent-data details, reopened note, MCP header button', () => {
+  const { d, post, sent } = boot();
+  post({ type: 'tabs', active: 'a', tabs: [{ id: 'a', title: 'First chat' }, { id: 'b', title: 'Second' }] });
+  (d.getElementById('tab-a') as HTMLElement).focus();
+  post({ type: 'tabs', active: 'b', tabs: [{ id: 'a', title: 'First chat' }, { id: 'b', title: 'Second' }] });
+  assert.equal(d.activeElement!.id, 'tab-b');
+  assert.equal(d.getElementById('messages-wrap')!.getAttribute('role'), 'tabpanel'); assert.equal(d.getElementById('messages-wrap')!.getAttribute('aria-labelledby'), 'tab-b');
+  assert.equal(d.getElementById('tab-a')!.getAttribute('aria-label'), 'First chat'); assert.equal(d.getElementById('tab-a')!.getAttribute('aria-controls'), 'messages-wrap');
+  (d.getElementById('tab-b') as HTMLElement).dispatchEvent(new (d.defaultView as any).KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+  assert.equal(d.activeElement!.id, 'tab-a');
+  post({ type: 'tabs', active: 'a', tabs: [{ id: 'a', title: 'Only' }] });
+  (d.getElementById('tab-a') as HTMLElement).dispatchEvent(new (d.defaultView as any).KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  assert.ok(!sent.some(m => m.type === 'closeTab'));
+  post({ type: 'userMessage', id: 'u1', text: 'Review my uncommitted changes', chips: [], sent: { label: 'diff: 2 files · +3 −1', items: ['a.ts', 'b.ts'] } });
+  const det = d.querySelector('.message.user details.sent-data') as HTMLElement;
+  assert.equal(det.querySelector('summary')!.textContent, 'diff: 2 files · +3 −1'); assert.equal(det.querySelector('pre')!.textContent, 'a.ts\nb.ts');
+  post({ type: 'transcript', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] });
+  assert.match(d.querySelector('.transcript-note')!.textContent!, /tool steps/);
+  const mb = d.getElementById('mcp-btn') as HTMLButtonElement; assert.equal(mb.hidden, true);
+  post({ type: 'mcpState', errors: 0, pending: 2 }); assert.equal(mb.hidden, false); assert.match(mb.getAttribute('aria-label')!, /consent/);
+  mb.click(); assert.ok(sent.some(m => m.type === 'mcpServers'));
+  post({ type: 'mcpState', errors: 0, pending: 0 }); assert.equal(mb.hidden, true);
 });

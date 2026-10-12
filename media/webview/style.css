@@ -308,16 +308,16 @@ button.cost-meter:focus-visible{outline:2px solid var(--vscode-focusBorder)}
 /* background task */
 .task-toggle[aria-pressed=true]{background:var(--vscode-button-background);color:var(--vscode-button-foreground);outline:1px solid var(--vscode-focusBorder)}
 .task-card{border-left:3px solid var(--vscode-progressBar-background,#0e70c0)}
-.task-card[data-state=stopped]{border-left-color:var(--vscode-editorWarning-foreground,#cca700)}
+.task-card[data-state=stopped]{border-left-color:var(--vscode-editorWarning-foreground,#cca700);border-left-style:dashed}
 .task-goal{font-weight:600;margin:2px 0 4px;overflow-wrap:anywhere}
 .task-progress{font-variant-numeric:tabular-nums;color:var(--vscode-descriptionForeground);margin:4px 0}
 .task-current{font-size:.92em;overflow-wrap:anywhere;min-height:1.2em}
 .task-log{list-style:none;margin:4px 0;padding:0;font-size:.9em;max-height:9em;overflow:auto}
 .task-log li{overflow-wrap:anywhere;padding:1px 0}
-.task-log li.asked{color:var(--vscode-editorWarning-foreground,#cca700)}
+.task-log li.asked{color:inherit;border-left:2px solid var(--vscode-editorWarning-foreground,#cca700);padding-left:4px}
 @media (forced-colors:active){.task-toggle[aria-pressed=true]{outline:2px solid Highlight}.task-card{border-left-color:CanvasText}}
 /* tabs + history */
-#tabs{display:flex;gap:2px;align-items:stretch;overflow-x:auto;padding:2px 6px 0;border-bottom:1px solid var(--vscode-panel-border,transparent);scrollbar-width:thin}
+#tabs{scroll-snap-type:x proximity;display:flex;gap:2px;align-items:stretch;overflow-x:auto;padding:2px 6px 0;border-bottom:1px solid var(--vscode-panel-border,transparent);scrollbar-width:thin}
 #tabs .tab{display:flex;align-items:center;border-radius:4px 4px 0 0;max-width:180px;flex:0 1 auto}
 #tabs .tab.active{background:var(--vscode-tab-activeBackground,var(--vscode-editor-background));box-shadow:inset 0 -2px 0 var(--vscode-focusBorder)}
 #tabs .tab-btn{background:none;border:0;color:inherit;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font:inherit;font-size:.92em;min-width:0}
@@ -338,5 +338,56 @@ button.cost-meter:focus-visible{outline:2px solid var(--vscode-focusBorder)}
 .hist-actions .danger{color:var(--vscode-errorForeground)}
 .hist-empty{color:var(--vscode-descriptionForeground);padding:6px 0}
 @media (forced-colors:active){#tabs .tab.active{outline:1px solid Highlight}}
-.approval-always{display:inline-flex;align-items:center;gap:4px;font-size:.92em;color:var(--vscode-descriptionForeground);margin-left:auto;cursor:pointer}
+.approval-always{display:flex;align-items:flex-start;gap:6px;font-size:.92em;margin:6px 0 2px;cursor:pointer;overflow-wrap:anywhere}
+.approval-always input{margin-top:2px}
 .approval-card[data-kind=mcp]{border-left:3px solid var(--vscode-charts-purple,#b180d7)}
+
+/* 0.14.1 (UIGrok): task pill, MCP header button, cards in a task, sent-data chip, reopened note */
+.task-pill,.mcp-btn{font-size:.85em;padding:1px 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+@container (max-width:300px){.task-pill{display:none}}
+@media (max-width:300px){.task-pill{display:none}}
+.approval-card.in-task{margin-left:12px;border-left:3px solid var(--vscode-progressBar-background,#0e70c0)}
+.task-of{font-style:italic}
+.approval-warn{font-weight:600}
+#tabs .tab{scroll-snap-align:start}
+.sent-data{margin-top:4px;font-size:.88em}
+.sent-data summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
+.sent-data pre{max-height:10em;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:4px 0 0;padding:4px 6px;background:var(--vscode-textCodeBlock-background);border-radius:4px}
+.transcript-note{font-size:.85em;color:var(--vscode-descriptionForeground);text-align:center;margin:4px 0 8px;border-bottom:1px dashed var(--vscode-widget-border,rgba(128,128,128,.35));padding-bottom:4px}
+@media (forced-colors:active){.approval-card.in-task{border-left-color:CanvasText}.task-card[data-state=stopped]{border-left-style:dashed}}
+
+/* Galactic theme: tabs, history, task card */
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs{background:linear-gradient(180deg,rgba(11,14,28,.75),rgba(11,14,28,.35));border-bottom:1px solid var(--g-border);backdrop-filter:blur(4px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab{border:1px solid transparent;border-bottom:0}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab.active{background:var(--g-panel);border-color:var(--g-border);box-shadow:inset 0 -2px 0 var(--g-cyan),0 -4px 14px rgba(79,209,255,.12)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab-btn{color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab:not(.active) .tab-btn,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab-close,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab-add{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab:not(.active):hover .tab-btn,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab-close:hover,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs .tab-add:hover{color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #tabs button:focus-visible{outline-color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #history-panel{background:var(--g-panel);border-bottom:1px solid var(--g-border);backdrop-filter:blur(6px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #history-search{background:rgba(255,255,255,.04);color:var(--g-text);border:1px solid var(--g-border);border-radius:6px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) #history-search:focus{border-color:var(--g-cyan);box-shadow:var(--g-glow);outline:none}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-item{border-bottom-color:var(--g-border);border-radius:6px;padding:4px 6px}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-item:hover{background:rgba(79,209,255,.06)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-title{color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-meta,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-empty{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-actions .h-btn.link{background:none;border:0;color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .hist-actions .danger{color:#ff8a9a}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-card{background:linear-gradient(135deg,rgba(79,209,255,.08),rgba(139,123,255,.08)),var(--g-panel);border:1px solid var(--g-border);border-left:3px solid var(--g-cyan);box-shadow:var(--g-glow);backdrop-filter:blur(4px)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-card[data-state=stopped]{border-left:3px dashed #ffcf5c}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-card[data-state=approved]{border-left-color:#5be3a7}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-goal{color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-progress,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-current{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-log li.auto{color:var(--g-text)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-log li.asked{color:var(--g-text);border-left-color:#ffcf5c}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .approval-card.in-task{border-left-color:var(--g-violet)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .task-pill{border-color:var(--g-cyan);color:var(--g-cyan)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .sent-data summary,
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .transcript-note{color:var(--g-dim)}
+.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .sent-data pre{background:#070912;border:1px solid var(--g-border)}

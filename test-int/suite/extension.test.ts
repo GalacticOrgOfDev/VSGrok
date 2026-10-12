@@ -42,7 +42,7 @@ suite('VSGrok in VS Code', () => {
   test('header markup: <header>, Rules chip right before the gear, cards.js loaded with nonce', async () => {
     const html: string = api.chat['view'].webview.html;
     assert.match(html, /<header id="header">[\s\S]*<\/header>/);
-    assert.match(html, /<button id="rules-chip"[^>]*><\/button>\s*<button id="history-btn"[^>]*aria-controls="history-panel"[^>]*>🕘<\/button>\s*<button id="settings-btn"[^>]*aria-controls="settings-panel"/);
+    assert.match(html, /<button id="rules-chip"[^>]*><\/button>\s*<button id="task-pill"[^>]*><\/button>\s*<button id="mcp-btn"[^>]*><\/button>\s*<button id="history-btn"[^>]*aria-controls="history-panel"[^>]*>🕘<\/button>\s*<button id="settings-btn"[^>]*aria-controls="settings-panel"/);
     assert.match(html, /<script nonce="[^"]+" src="[^"]*cards\.js"><\/script>\s*<script nonce="[^"]+" src="[^"]*main\.js">/);
   });
 

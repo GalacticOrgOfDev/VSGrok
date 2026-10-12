@@ -17,7 +17,7 @@ import { SECRET_KEY, DEFAULT_MODEL, cfg } from './config';
 export const XAI_CONSOLE_KEYS_URL = 'https://console.x.ai/team/default/api-keys';
 import { buildCommandPrompt, CodeAction, fixDiagnostic, GrokQuickFixProvider } from './commands';
 import { TerminalHelper } from './terminalHelper';
-import { generateCommitMessage, reviewChanges, draftPrDescription } from './git';
+import { generateCommitMessage, reviewChanges, draftPrDescription, setGitNotifier } from './git';
 
 let chatRef: ChatViewProvider | undefined;
 export function activate(context: vscode.ExtensionContext) {
@@ -57,6 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
   const mcpManager = new McpManager(context);
   setMcpManager(mcpManager);
   context.subscriptions.push(mcpManager, { dispose: () => setMcpManager(undefined) });
+  context.subscriptions.push(mcpManager.onDidChange(() => chat.pushMcp()));
   void mcpManager.ready();
   reg('vsgrok.mcpServers', async () => {
     await mcpManager.ready();
@@ -162,6 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
   const terminalHelper = new TerminalHelper(chat); context.subscriptions.push(terminalHelper);
   reg('vsgrok.askAboutTerminalFailure', () => terminalHelper.ask());
   if (testApi) { testApi.terminalHelper = terminalHelper; }
+  setGitNotifier(msg => chat.toastIfVisible(msg)); context.subscriptions.push({ dispose: () => setGitNotifier(undefined) });
   reg('vsgrok.reviewChanges', (arg?: { rootUri?: vscode.Uri }) => reviewChanges(chat, arg));
   reg('vsgrok.draftPrDescription', (arg?: { rootUri?: vscode.Uri; target?: 'clipboard' | vscode.Uri }) => draftPrDescription(context, arg));
   reg('vsgrok.fixDiagnostic', (uri: vscode.Uri, range: vscode.Range, message: string) => fixDiagnostic(context, uri, range, message));
