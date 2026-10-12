@@ -60,7 +60,7 @@
       return { index: i, op, icon: o.icon, opLabel: o.label, path: String(f.path || ''), newPath: op === 'rename' && f.newPath ? String(f.newPath) : '',
         delta: f.refused ? '' : (op === 'delete' ? '' : '+' + added + ' ') + '−' + removed,
         deltaLabel: f.refused ? '' : (op === 'delete' ? removed + ' lines removed' : added + ' lines added, ' + removed + ' removed'),
-        refused: !!f.refused, reason: f.refused ? String(typeof f.refused === 'string' ? f.refused : (f.reason || 'refused')) : '', diff: !f.refused };
+        refused: !!f.refused, reason: f.refused ? String(typeof f.refused === 'string' ? f.refused : (f.reason || 'refused')) : '', diff: !f.refused, warn: f.warn && !f.refused ? String(f.warn) : '' };
     });
     const usable = files.filter(f => !f.refused);
     const n = { create: 0, modify: 0, delete: 0, rename: 0 }; usable.forEach(f => n[f.op]++);

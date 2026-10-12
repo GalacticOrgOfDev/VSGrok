@@ -4,16 +4,16 @@
 // Pure module (no vscode import) so it is unit-testable.
 
 export type ApprovalRequest =
-  | { kind: 'command'; title?: string; command: string }
+  | { kind: 'command'; title?: string; command: string; runs?: string[]; source?: string; repoControlled?: boolean }
   | { kind: 'edit'; title?: string; path: string; reason?: string; isNew?: boolean; added?: number; removed?: number }
-  | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string }[] };
+  | { kind: 'plan'; title?: string; summary?: string; files: { path: string; op: 'create' | 'modify' | 'delete' | 'rename'; newPath?: string; added: number; removed: number; refused?: string; warn?: string }[] };
 
 export interface ApprovalDecision { ok: boolean; selected?: number[] }
 
 export interface ApprovalCardMessage { type: 'approvalRequest'; reqId: string; request: ApprovalRequest }
 export interface ApprovalOptions { signal?: AbortSignal; onViewDiff?: (index?: number) => void | Promise<void> }
 
-interface Pending { resolve: (d: ApprovalDecision) => void; onViewDiff?: (index?: number) => void | Promise<void>; cleanup: () => void }
+interface Pending { selectable?: number; resolve: (d: ApprovalDecision) => void; onViewDiff?: (index?: number) => void | Promise<void>; cleanup: () => void }
 
 export class ApprovalBroker {
   private pending = new Map<string, Pending>();
@@ -33,7 +33,7 @@ export class ApprovalBroker {
     return new Promise<ApprovalDecision>((resolve) => {
       const onAbort = () => this.settle(reqId, false, 'cancelled');
       opts.signal?.addEventListener('abort', onAbort, { once: true });
-      this.pending.set(reqId, { resolve, onViewDiff: opts.onViewDiff, cleanup: () => opts.signal?.removeEventListener('abort', onAbort) });
+      this.pending.set(reqId, { selectable: req.kind === 'plan' ? req.files.filter(f => !f.refused).length : undefined, resolve, onViewDiff: opts.onViewDiff, cleanup: () => opts.signal?.removeEventListener('abort', onAbort) });
       const msg: ApprovalCardMessage = { type: 'approvalRequest', reqId, request: req };
       this.post(msg);
     });
@@ -44,8 +44,10 @@ export class ApprovalBroker {
   handle(m: any): boolean {
     if (m?.type === 'approvalResponse' && typeof m.reqId === 'string') {
       const ok = m.decision === 'approve';
-      const selected = ok && Array.isArray(m.selected) ? m.selected.filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < 1000) as number[] : undefined;
-      if (ok && selected && !selected.length) { this.settle(m.reqId, false, 'denied'); return true; }
+      const lim = this.pending.get(m.reqId)?.selectable;
+      // Plan cards: only indices of selectable (non-refused) rows count; an approve without any is a deny.
+      const selected = ok && Array.isArray(m.selected) ? [...new Set(m.selected.filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < (lim ?? 1000)) as number[])] : undefined;
+      if (ok && ((selected && !selected.length) || (lim !== undefined && !selected))) { this.settle(m.reqId, false, 'denied'); return true; }
       this.settle(m.reqId, ok, ok ? 'approved' : 'denied', selected);
       return true;
     }

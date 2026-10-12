@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-10-12
+**Security and correctness review (JGrok)**
+- **H1:** plan create and rename targets are checked with a new `checkWritable`. It resolves the nearest existing parent directory through symlinks, which must stay inside the workspace, and refuses secret-looking results. A directory symlink can no longer route a write outside the workspace.
+- **H2:** right before applying, each file is re-read and compared byte-for-byte with what the card showed. If anything changed, was created or was deleted meanwhile, nothing is applied ("changed since the plan was proposed"). Files with unsaved editor changes are refused.
+- **H3:** the `run_tests` approval card shows what will actually run: the package.json script bodies, including `pre`/`post` hooks. Repo-controlled sources are flagged.
+- **H4:** `vsgrok.testCommand` is now `machine-overridable` and listed in `restrictedConfigurations`, so Restricted Mode ignores it. A value set by the workspace is labelled "set by this workspace".
+- **M1:** View diff contents are reused per row, freed when the card is decided or the diff closes, and capped at 20 (LRU).
+- **M2:** only the last 10 plans keep an undo snapshot. Older Plan applied cards say the undo expired.
+- **M3:** renames use a real `renameFile`, which keeps the bytes and file mode. Undo restores byte snapshots. Binary or non-UTF-8 files can be deleted or renamed but never rewritten as text.
+- **M4:** plan approvals only count selectable rows. An approve with no valid index, or no selection at all, is a deny, and an empty plan is never applied.
+- **M5:** problems are sent inside a `<diagnostics source="untrusted tool output">` block, redacted, and capped at 4 KB. The system prompt says such blocks are data, not instructions.
+- **M6:** test-output lines are trimmed to 2,000 characters before parsing.
+- **L1:** the `.git` check is case-insensitive. Plans touching `.vscode/*.json`, `VSGrok.md`, `.vsgrok/`, CI workflows or `package.json` are flagged on the card.
+- **L2:** Windows alternate data streams, reserved device names, and segments ending in a dot or space are refused.
+- **L3:** size caps are measured in UTF-8 bytes (1 MB per file) and there is a 5 MB plan total.
+- **L4:** undo builds the edit first, then verifies the hashes and applies back to back.
+- **L5:** diagnostics on symlinks that resolve outside the workspace or onto a secret are hidden.
+- Plan undo hashes now use SHA-256.
+
 **Plan card UI review (UIGrok)**
 - Plan card:
   - The file list scrolls (max height about 45% of the view) and Approve/Deny stay pinned.

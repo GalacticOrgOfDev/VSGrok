@@ -68,8 +68,8 @@ async function readText(uri: vscode.Uri): Promise<string> {
   return text.length > MAX_READ ? text.slice(0, MAX_READ) + `\n…[truncated at ${MAX_READ} chars]` : text;
 }
 
-export async function runCommand(command: string, token: vscode.CancellationToken): Promise<string> {
-  const ok = await requestApproval({ kind: 'command', command }, { signal: toSignal(token) });
+export async function runCommand(command: string, token: vscode.CancellationToken, card: { runs?: string[]; source?: string; repoControlled?: boolean } = {}): Promise<string> {
+  const ok = await requestApproval({ kind: 'command', command, ...card }, { signal: toSignal(token) });
   if (!ok) { return 'User declined to run the command.'; }
   const cp = await import('child_process');
   return new Promise((resolve) => {

@@ -305,4 +305,126 @@ suite('VSGrok in VS Code', () => {
     await idle();
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   });
+
+  // ---------- 0.7.1: JGrok review ----------
+  async function runPlan(changes: unknown[], select?: (files: { path: string; refused?: string }[]) => number[] | 'deny', between?: () => Promise<void>) {
+    const n0 = posts('approvalRequest').length;
+    const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { changes });
+    const card = await until(() => posts('approvalRequest')[n0]);
+    const files = card.request.files as { path: string; refused?: string }[];
+    if (between) { await between(); }
+    const sel = select ? select(files) : files.map((f, i) => f.refused ? -1 : i).filter(i => i >= 0);
+    await api.chat.testReceive(sel === 'deny' ? { type: 'approvalResponse', reqId: card.reqId, decision: 'deny' } : { type: 'approvalResponse', reqId: card.reqId, decision: 'approve', selected: sel });
+    return { out: String(await p), card, files };
+  }
+  const bytes = async (p: string) => Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root(), p)));
+  const lastApplied = () => posts('planApplied').at(-1);
+  async function undoLast() {
+    const a = lastApplied();
+    await api.chat.testReceive({ type: 'undoPlan', planId: a.planId });
+    return until(() => posts('planUndone').find(m => m.planId === a.planId));
+  }
+
+  test('H1: plan create/rename through a symlinked directory out of the workspace is refused', async function () {
+    if (!(await exists('src/linkdir'))) { this.skip(); }
+    const n0 = posts('approvalRequest').length;
+    const out = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { changes: [
+      { op: 'create', path: 'src/linkdir/escape.ts', content: 'x' },
+    ] }));
+    assert.match(out, /^Plan not shown: .*outside the workspace/);
+    assert.strictEqual(posts('approvalRequest').length, n0, 'no card for an all-refused plan');
+    const fs = await import('fs');
+    assert.ok(!fs.existsSync(require('path').join(process.env.VSGROK_TEST_OUTDIR!, 'escape.ts')));
+    const r = await runPlan([{ op: 'create', path: 'src/ok1.ts', content: 'ok\n' }, { op: 'rename', path: 'src/auth.ts', newPath: 'src/linkdir/auth.ts' }]);
+    assert.match(String(r.files.find(f => f.path === 'src/auth.ts')?.refused), /outside the workspace/);
+    assert.ok(await exists('src/ok1.ts')); assert.ok(await exists('src/auth.ts'));
+    assert.ok((await undoLast()).ok);
+  });
+
+  test('H2: a file edited while the card is open is not overwritten', async () => {
+    const before = await rd('src/billing.ts');
+    const r = await runPlan([{ op: 'modify', path: 'src/billing.ts', content: 'export const replaced = 1;\n' }], undefined, async () => {
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root(), 'src/billing.ts'), Buffer.from(before + '// user edit\n'));
+    });
+    assert.match(r.out, /not applied: src\/billing\.ts changed since the plan was proposed/);
+    assert.strictEqual(await rd('src/billing.ts'), before + '// user edit\n');
+    await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root(), 'src/billing.ts'), Buffer.from(before));
+  });
+
+  test('M3: binary rename keeps the bytes; delete + undo restores them; binary modify refused; rename with content + undo', async () => {
+    const orig = await bytes('logo.bin');
+    await runPlan([{ op: 'rename', path: 'logo.bin', newPath: 'assets-logo.bin' }]);
+    assert.deepStrictEqual(await bytes('assets-logo.bin'), orig);
+    assert.ok((await undoLast()).ok);
+    assert.deepStrictEqual(await bytes('logo.bin'), orig);
+    await runPlan([{ op: 'delete', path: 'logo.bin' }]);
+    assert.ok(!(await exists('logo.bin')));
+    assert.ok((await undoLast()).ok);
+    assert.deepStrictEqual(await bytes('logo.bin'), orig);
+    const out = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { changes: [{ op: 'modify', path: 'logo.bin', content: 'text' }] }));
+    assert.match(out, /binary or non-UTF-8/);
+    const auth = await rd('src/auth.ts');
+    await runPlan([{ op: 'rename', path: 'src/auth.ts', newPath: 'src/auth2.ts', content: auth + '// moved\n' }]);
+    assert.ok(!(await exists('src/auth.ts'))); assert.match(await rd('src/auth2.ts'), /\/\/ moved/);
+    assert.ok((await undoLast()).ok);
+    assert.strictEqual(await rd('src/auth.ts'), auth); assert.ok(!(await exists('src/auth2.ts')));
+  });
+
+  test('M1: View diff contents are reused per row and freed when the card is decided', async () => {
+    const c0 = Number(await vscode.commands.executeCommand('vsgrok.__testVirtualDiffCount'));
+    const n0 = posts('approvalRequest').length;
+    const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'propose_plan', { changes: [{ op: 'create', path: 'src/vd.ts', content: 'a\n' }] });
+    const card = await until(() => posts('approvalRequest')[n0]);
+    for (let i = 0; i < 3; i++) { await api.chat.testReceive({ type: 'approvalViewDiff', reqId: card.reqId, index: 0 }); }
+    await sleep(200);
+    assert.strictEqual(Number(await vscode.commands.executeCommand('vsgrok.__testVirtualDiffCount')), c0 + 2);
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'deny' });
+    await p;
+    assert.strictEqual(Number(await vscode.commands.executeCommand('vsgrok.__testVirtualDiffCount')), c0);
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  });
+
+  test('M2: only the last 10 plans keep undo; older cards are told it expired', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) { await runPlan([{ op: 'create', path: `src/m2-${i}.ts`, content: `${i}\n` }]); ids.push(lastApplied().planId); }
+    const exp = await until(() => posts('planUndone').find(m => m.planId === ids[0]));
+    assert.strictEqual(exp.ok, false); assert.match(exp.msg, /expired/);
+    await api.chat.testReceive({ type: 'undoPlan', planId: ids[0] });
+    for (const id of ids.slice(1).reverse()) { await api.chat.testReceive({ type: 'undoPlan', planId: id }); }
+    assert.ok(await exists('src/m2-0.ts')); assert.ok(!(await exists('src/m2-10.ts'))); assert.ok(!(await exists('src/m2-1.ts')));
+    await vscode.workspace.fs.delete(vscode.Uri.joinPath(root(), 'src/m2-0.ts'));
+  });
+
+  test('M4: approve with only out-of-range indices is a deny; nothing is applied', async () => {
+    const r = await runPlan([{ op: 'create', path: 'src/m4.ts', content: 'x' }], () => [999]);
+    assert.match(r.out, /denied/); assert.ok(!(await exists('src/m4.ts')));
+  });
+
+  test('L1: behavior-changing files are flagged on the card', async () => {
+    const r = await runPlan([{ op: 'create', path: 'VSGrok2.md', content: 'x' }, { op: 'create', path: '.vscode/tasks.json', content: '{}' }], () => 'deny');
+    assert.match(String((r.files as { path: string; warn?: string }[]).find(f => f.path === '.vscode/tasks.json')?.warn), /tasks/);
+  });
+
+  test('H3/H4: run_tests card shows the script body that runs; testCommand is restricted and machine-overridable', async () => {
+    const n0 = posts('approvalRequest').length;
+    const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_tests', {});
+    const c = await until(() => posts('approvalRequest')[n0]);
+    assert.deepStrictEqual(c.request.runs, ['test: node fail-test.js']);
+    assert.strictEqual(c.request.repoControlled, true); assert.match(c.request.source, /package\.json/);
+    await api.chat.testReceive({ type: 'approvalResponse', reqId: c.reqId, decision: 'deny' }); await p;
+    const pj = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!.packageJSON;
+    assert.deepStrictEqual(pj.capabilities.untrustedWorkspaces.restrictedConfigurations, ['vsgrok.testCommand']);
+    assert.strictEqual(pj.contributes.configuration.properties['vsgrok.testCommand'].scope, 'machine-overridable');
+  });
+
+  test('L5/M5: diagnostics on a symlink to a secret are hidden; get_problems output is framed as untrusted', async function () {
+    if (!(await exists('src/innocent.ts'))) { this.skip(); }
+    const dc = vscode.languages.createDiagnosticCollection('vsgrok-l5');
+    dc.set(vscode.Uri.joinPath(root(), 'src/innocent.ts'), [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), 'SECRET=should-never-show', vscode.DiagnosticSeverity.Error)]);
+    dc.set(vscode.Uri.joinPath(root(), 'src/billing.ts'), [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), 'visible one', vscode.DiagnosticSeverity.Error)]);
+    try {
+      const out = String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'get_problems', {}));
+      assert.doesNotMatch(out, /should-never-show/); assert.match(out, /visible one/); assert.match(out, /^<diagnostics source="untrusted tool output"/);
+    } finally { dc.dispose(); }
+  });
 });

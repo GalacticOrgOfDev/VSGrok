@@ -327,6 +327,7 @@
         cb.setAttribute('aria-describedby', rs.id); li.appendChild(rs);
       } else {
         cb.checked = true; boxes.push({ cb, li, index: f.index });
+        if (f.warn) { const wn = document.createElement('span'); wn.className = 'plan-warn'; wn.id = reqId + '-w' + f.index; wn.textContent = '⚠ ' + f.warn; cb.setAttribute('aria-describedby', wn.id); li.appendChild(wn); }
         const dl = document.createElement('span'); dl.className = 'plan-delta'; dl.textContent = f.delta; dl.setAttribute('aria-label', f.deltaLabel);
         const vd = document.createElement('button'); vd.type = 'button'; vd.className = 'plan-diff'; vd.textContent = 'View diff'; vd.setAttribute('aria-label', 'View diff for ' + f.path);
         vd.addEventListener('click', () => vscode.postMessage({ type: 'approvalViewDiff', reqId, index: f.index }));
@@ -391,6 +392,14 @@
     card.appendChild(head);
     if (r.kind === 'command') {
       const pre = document.createElement('pre'); pre.className = 'approval-cmd'; pre.textContent = String(r.command || ''); card.appendChild(pre);
+      if (Array.isArray(r.runs) && r.runs.length) {
+        const lab = document.createElement('div'); lab.className = 'approval-meta'; lab.textContent = 'This runs:'; card.appendChild(lab);
+        const rp = document.createElement('pre'); rp.className = 'approval-cmd approval-runs'; rp.textContent = r.runs.map(String).join('\n'); card.appendChild(rp);
+      }
+      if (r.source) {
+        const src = document.createElement('div'); src.className = 'approval-meta approval-source' + (r.repoControlled ? ' repo' : '');
+        src.textContent = 'From ' + String(r.source) + (r.repoControlled ? ' · repo-controlled: check it before running' : ''); card.appendChild(src);
+      }
     } else {
       const p = document.createElement('div'); p.className = 'approval-path'; p.textContent = String(r.path || ''); card.appendChild(p);
       const meta = document.createElement('div'); meta.className = 'approval-meta';

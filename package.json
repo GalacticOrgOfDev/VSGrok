@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -405,7 +405,8 @@
         "vsgrok.testCommand": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Command `run_tests` uses (e.g. `pnpm test`, `pytest -q`). Empty = detect from package.json scripts, pytest config, go.mod or Cargo.toml. Always shown on an approval card before it runs."
+          "markdownDescription": "Command `run_tests` uses (e.g. `pnpm test`, `pytest -q`). Empty = detect from package.json scripts, pytest config, go.mod or Cargo.toml. Always shown on an approval card before it runs. Ignored in Restricted Mode; a value set by the workspace is labelled as such on the card.",
+          "scope": "machine-overridable"
         },
         "vsgrok.checks.offerAfterEdits": {
           "type": "boolean",
@@ -474,7 +475,10 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md, and still never reads .env or credential files. Agent edits and commands always need your approval."
+      "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md, and still never reads .env or credential files. Agent edits and commands always need your approval.",
+      "restrictedConfigurations": [
+        "vsgrok.testCommand"
+      ]
     }
   }
 }

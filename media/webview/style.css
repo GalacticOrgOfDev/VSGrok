@@ -266,3 +266,6 @@ body.vscode-high-contrast .approval-card,body.vscode-high-contrast-light .approv
 .foot-btn.checks-btn:disabled{opacity:.75}
 @container (max-width:280px){.plan-delta{flex-basis:100%;padding-left:calc(1.2em + 24px)}}
 .plan-card{container-type:inline-size}
+.plan-warn{order:10;flex-basis:100%;padding-left:calc(1.2em + 24px);font-size:11px;color:var(--vscode-editorWarning-foreground)}
+.approval-source.repo{color:var(--vscode-editorWarning-foreground)}
+.approval-runs{max-height:8em;overflow:auto}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { normPath, validatePlan, selectedIndices, hashText } from '../agent/planCore';
+import { normPath, validatePlan, selectedIndices, hashText, sensitivePath, decodeText, MAX_PLAN_TOTAL } from '../agent/planCore';
 import { ApprovalBroker, ApprovalCardMessage } from '../agent/approvals';
 
 test('plan: normPath rejects absolute, .. and .git', () => {
@@ -51,4 +51,46 @@ test('approval: plan decision carries the selected subset; empty selection denie
   const p2 = b.requestDecision(req);
   b.handle({ type: 'approvalResponse', reqId: posted.at(-1)!.reqId, decision: 'approve', selected: [] });
   assert.equal((await p2).ok, false);
+});
+
+test('L1/L2: case-insensitive .git, Windows ADS/reserved names/trailing dot-space refused', () => {
+  for (const bad of ['.GIT/config', 'a/.Git/hooks/pre-commit', 'a.ts:stream', 'CON', 'src/nul.txt', 'lpt1', 'src/foo./x.ts', 'src/foo /x.ts']) { assert.equal(normPath(bad), undefined, bad); }
+  assert.equal(normPath('src/console.ts'), 'src/console.ts');
+  assert.equal(normPath('.gitignore'), '.gitignore');
+});
+
+test('L1: behavior-changing paths are flagged', () => {
+  assert.ok(sensitivePath('.vscode/tasks.json')); assert.ok(sensitivePath('VSGrok.md')); assert.ok(sensitivePath('.vsgrok/rules.md'));
+  assert.ok(sensitivePath('.github/workflows/ci.yml')); assert.ok(sensitivePath('package.json'));
+  assert.equal(sensitivePath('src/a.ts'), undefined);
+});
+
+test('L3: byte-based per-file cap and a plan total', () => {
+  const emoji = '😀'.repeat(300_000); // 600k UTF-16 units, 1.2 MB UTF-8
+  assert.ok(validatePlan({ changes: [{ op: 'create', path: 'e.txt', content: emoji }] }).errors.some(e => /too large/.test(e)));
+  const chunk = 'x'.repeat(900_000);
+  const r = validatePlan({ changes: Array.from({ length: 7 }, (_, i) => ({ op: 'create', path: `f${i}.txt`, content: chunk })) });
+  assert.equal(r.plan.changes.length, Math.floor(MAX_PLAN_TOTAL / 900_000));
+  assert.ok(r.errors.some(e => /in total/.test(e)));
+});
+
+test('M3: decodeText refuses binary / invalid UTF-8; hashes are sha256', () => {
+  assert.equal(decodeText(Buffer.from('héllo')), 'héllo');
+  assert.equal(decodeText(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1])), undefined);
+  assert.equal(decodeText(Buffer.from([0xe9, 0x61])), undefined); // latin-1
+  assert.equal(hashText('a').length, 64);
+});
+
+test('M4: plan approvals only count selectable rows; out-of-range or missing selection denies', async () => {
+  const posted: ApprovalCardMessage[] = [];
+  const b = new ApprovalBroker((m) => posted.push(m as ApprovalCardMessage));
+  const req = { kind: 'plan' as const, files: [{ path: 'a', op: 'create' as const, added: 1, removed: 0 }, { path: '.env', op: 'create' as const, added: 0, removed: 0, refused: 'secret' }] };
+  for (const sel of [[999], [1], undefined]) {
+    const p = b.requestDecision(req);
+    b.handle({ type: 'approvalResponse', reqId: posted.at(-1)!.reqId, decision: 'approve', ...(sel ? { selected: sel } : {}) });
+    assert.equal((await p).ok, false, JSON.stringify(sel));
+  }
+  const p = b.requestDecision(req);
+  b.handle({ type: 'approvalResponse', reqId: posted.at(-1)!.reqId, decision: 'approve', selected: [0, 0, 1] });
+  assert.deepEqual(await p, { ok: true, selected: [0] });
 });

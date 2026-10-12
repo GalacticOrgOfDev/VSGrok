@@ -16,6 +16,11 @@ let counter = 0;
 
 export function registerProposals(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(SCHEME, provider));
+  // Free a virtual diff's contents when its editor closes.
+  ctx.subscriptions.push(vscode.workspace.onDidCloseTextDocument((d) => {
+    if (d.uri.scheme !== SCHEME) { return; }
+    const m = /^(?:old|new)=(.+)$/.exec(d.uri.query); if (m) { dropKey(decodeURIComponent(m[1])); }
+  }));
 }
 
 /**
@@ -60,12 +65,30 @@ export async function proposeRangeEdit(doc: vscode.TextDocument, range: vscode.R
   return proposeEdit(doc.uri, next, reason, signal);
 }
 
-/** Open a read-only diff of two in-memory texts (plan cards' View diff). */
-export async function showVirtualDiff(rel: string, oldText: string, newText: string, op = 'modify') {
-  const id = ++counter;
-  const left = vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `old=${id}` });
-  const right = vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `new=${id}` });
+/** Open a read-only diff of two in-memory texts (plan cards' View diff). Entries are keyed so repeat clicks reuse them. */
+const virtualKeys: string[] = []; // LRU of keys, newest last
+export const MAX_VIRTUAL_DIFFS = 20;
+const keyRel = new Map<string, string>();
+const vUris = (key: string, rel: string) => ({
+  left: vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `old=${encodeURIComponent(key)}` }),
+  right: vscode.Uri.from({ scheme: SCHEME, path: '/' + rel, query: `new=${encodeURIComponent(key)}` }),
+});
+function dropKey(key: string) {
+  const r = keyRel.get(key); if (r === undefined) { return; }
+  const { left, right } = vUris(key, r); provider.contents.delete(left.toString()); provider.contents.delete(right.toString());
+  keyRel.delete(key); const i = virtualKeys.indexOf(key); if (i >= 0) { virtualKeys.splice(i, 1); }
+}
+export async function showVirtualDiff(rel: string, oldText: string, newText: string, op = 'modify', key = `v${++counter}`) {
+  if (keyRel.has(key) && keyRel.get(key) !== rel) { dropKey(key); }
+  const { left, right } = vUris(key, rel);
   provider.contents.set(left.toString(), oldText);
   provider.contents.set(right.toString(), newText);
+  keyRel.set(key, rel);
+  const i = virtualKeys.indexOf(key); if (i >= 0) { virtualKeys.splice(i, 1); } virtualKeys.push(key);
+  while (virtualKeys.length > MAX_VIRTUAL_DIFFS) { dropKey(virtualKeys[0]); }
   await vscode.commands.executeCommand('vscode.diff', left, right, `${rel} ↔ Grok plan (${op})`, { preview: true, preserveFocus: true });
 }
+/** Drop every virtual diff whose key is `prefix` or starts with `prefix-` (called when a plan card is decided). */
+export function disposeVirtualDiffs(prefix: string) { for (const k of [...keyRel.keys()]) { if (k === prefix || k.startsWith(prefix + '-')) { dropKey(k); } } }
+/** Number of stored in-memory documents (tests). */
+export function virtualDiffCount(): number { return provider.contents.size; }

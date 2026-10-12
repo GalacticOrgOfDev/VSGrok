@@ -6,6 +6,7 @@ import { initDiagnostics, diagnosticsReport } from './diagnostics';
 import { workspaceIndex } from './index/workspaceIndex';
 import { executeTool } from './agent/tools';
 import { runEditorAction } from './editorActions';
+import { virtualDiffCount } from './proposals';
 import { GrokInlineProvider } from './inline';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
@@ -48,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
   const updater = new Updater(context, chat);
   if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) {
     testApi = { chat, updater, workspaceIndex };
+    reg('vsgrok.__testVirtualDiffCount', () => virtualDiffCount());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     reg('vsgrok.__testRunTool', async (name: string, args: any) => {
       const cts = new vscode.CancellationTokenSource();

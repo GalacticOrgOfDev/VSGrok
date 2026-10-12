@@ -43,3 +43,47 @@ export async function checkReadable(uri: vscode.Uri): Promise<FileCheck> {
   if (!(await realInside(uri))) { return { ok: false, rel, reason: 'symlink to a file outside the workspace or to a secret' }; }
   return { ok: true, rel };
 }
+
+/** Sync variant for hot paths (diagnostics): real path inside the workspace and not a secret. Nonexistent → false. */
+export function realInsideSync(uri: vscode.Uri): boolean {
+  if (uri.scheme !== 'file') { return true; }
+  const f = vscode.workspace.getWorkspaceFolder(uri);
+  if (!f) { return false; }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('fs') as typeof import('fs'); const path = require('path') as typeof import('path');
+  try {
+    const root = fs.realpathSync(f.uri.fsPath), real = fs.realpathSync(uri.fsPath);
+    return isInside(root, real, path.sep) && !isSecretPath(path.relative(root, real).split(path.sep).join('/'));
+  } catch { return false; }
+}
+
+/**
+ * May VSGrok create/overwrite/rename-onto this path? Same rules as checkReadable, plus: the nearest existing ancestor
+ * (and the target itself, if it exists) must resolve inside the workspace, and the resolved target must not look secret.
+ */
+export async function checkWritable(uri: vscode.Uri): Promise<FileCheck> {
+  const rel0 = vscode.workspace.asRelativePath(uri, false);
+  if (uri.scheme !== 'file' && uri.scheme !== 'vscode-remote') { return { ok: false, rel: rel0, reason: `unsupported location (${uri.scheme}:)` }; }
+  const rel = relInWorkspace(uri);
+  if (rel === undefined || rel === '') { return { ok: false, rel: rel0, reason: 'outside the open workspace' }; }
+  if (isSecretPath(rel)) { return { ok: false, rel, reason: 'looks like a secrets/credentials file' }; }
+  if (uri.scheme !== 'file') { return { ok: true, rel }; }
+  const f = vscode.workspace.getWorkspaceFolder(uri)!;
+  const fs = await import('fs'); const path = await import('path');
+  let root: string;
+  try { root = await fs.promises.realpath(f.uri.fsPath); } catch { return { ok: false, rel, reason: 'workspace folder not resolvable' }; }
+  let probe = uri.fsPath; const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = await fs.promises.realpath(probe);
+      const resolved = tail.length ? path.join(real, ...tail.reverse()) : real;
+      if (!isInside(root, resolved, path.sep)) { return { ok: false, rel, reason: 'path resolves outside the workspace (symlink)' }; }
+      if (isSecretPath(path.relative(root, resolved).split(path.sep).join('/'))) { return { ok: false, rel, reason: 'resolves to a secrets/credentials file (symlink)' }; }
+      return { ok: true, rel };
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) { return { ok: false, rel, reason: 'no existing parent directory' }; }
+      tail.push(path.basename(probe)); probe = parent;
+    }
+  }
+}
