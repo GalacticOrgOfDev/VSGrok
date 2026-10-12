@@ -24,3 +24,16 @@ export async function requestOptions(ctx: vscode.ExtensionContext, over: Partial
     ...over,
   };
 }
+
+export type ApiMode = 'responses' | 'chat';
+export function apiMode(): ApiMode { return cfg().get<string>('api') === 'chat' ? 'chat' : 'responses'; }
+
+/** Built-in server-side tools enabled in settings (docs.x.ai/developers/tools/overview). */
+export function serverTools(): import('./xai/responses').ServerTool[] {
+  const c = cfg();
+  const out: import('./xai/responses').ServerTool[] = [];
+  if (c.get<boolean>('tools.webSearch')) { out.push({ type: 'web_search' }); }
+  if (c.get<boolean>('tools.xSearch')) { out.push({ type: 'x_search' }); }
+  if (c.get<boolean>('tools.codeExecution')) { out.push({ type: 'code_interpreter' }); }
+  return out;
+}

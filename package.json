@@ -177,6 +177,49 @@
           "default": "grok-4.7",
           "description": "xAI model id used for chat, commands and agent mode. Pick from the chat header dropdown or 'VSGrok: Select Model' (list comes live from GET {baseUrl}/models)."
         },
+        "vsgrok.api": {
+          "type": "string",
+          "enum": ["responses", "chat"],
+          "enumDescriptions": [
+            "xAI Responses API (POST /v1/responses): server-side history, reasoning summaries, Web/X Search, Code Execution.",
+            "Legacy Chat Completions API (POST /v1/chat/completions). Fallback only: no server-side tools or citations."
+          ],
+          "default": "responses",
+          "markdownDescription": "Which xAI API chat, commands and agent mode use. See [Migrating to Responses API](https://docs.x.ai/developers/model-capabilities/text/comparison). Inline completions always use Chat Completions (short stateless requests)."
+        },
+        "vsgrok.responses.store": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Store responses on xAI (30 days) and continue chats with `previous_response_id` so only new turns are sent. When off, `store: false` is sent and VSGrok resends the full local history (including encrypted reasoning) each turn."
+        },
+        "vsgrok.responses.compactAtTokens": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 0,
+          "markdownDescription": "When a chat's input reaches this many tokens, compact it with `POST /v1/responses/compact` before the next turn ([Context Compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction)). 0 disables."
+        },
+        "vsgrok.tools.webSearch": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let Grok use xAI's server-side [Web Search](https://docs.x.ai/developers/tools/web-search) tool (billed per call by xAI). Also toggled from the chat header. Responses API only."
+        },
+        "vsgrok.tools.xSearch": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let Grok use xAI's server-side [X Search](https://docs.x.ai/developers/tools/x-search) tool (billed per fetched item). Also toggled from the chat header. Responses API only."
+        },
+        "vsgrok.tools.codeExecution": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Opt in to xAI's server-side [Code Execution](https://docs.x.ai/developers/tools/code-execution) tool (`code_interpreter`; runs Python in xAI's sandbox, not on your machine). Responses API only."
+        },
+        "vsgrok.context.maxFileChars": {
+          "type": "number",
+          "default": 1000000,
+          "minimum": 10000,
+          "maximum": 2000000,
+          "description": "Maximum characters of an attached file or selection sent as chat context (grok-4.7 has a 500k-token window)."
+        },
         "vsgrok.baseUrl": {
           "type": "string",
           "default": "https://api.x.ai/v1",
@@ -193,7 +236,7 @@
           "type": "number",
           "default": 8192,
           "minimum": 1,
-          "description": "Maximum tokens per response."
+          "description": "Maximum visible output tokens per response (max_output_tokens on the Responses API, max_tokens on Chat Completions)."
         },
         "vsgrok.reasoningEffort": {
           "type": "string",

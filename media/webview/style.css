@@ -155,3 +155,13 @@ body.theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light){
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) ::-webkit-scrollbar-thumb{background:rgba(120,160,255,.2);border-radius:4px}
 @media (prefers-reduced-motion:reduce){.theme-galactic #stars i{animation:none!important}.h-btn,.code-btn,.foot-btn,.h-select{transition:none!important}}
 .theme-galactic:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .message.user{margin-right:6px}
+
+/* v0.4 server-side tool toggles + citations */
+.tool-toggle{font-size:11px;padding:1px 6px;opacity:.75}
+.tool-toggle.on{opacity:1;outline:1px solid var(--vscode-focusBorder);background:var(--vscode-button-secondaryBackground,transparent)}
+.tool-toggle:disabled{opacity:.35;cursor:not-allowed}
+.citations{margin-top:8px;padding:6px 8px;border-left:2px solid var(--vscode-textLink-foreground);font-size:11px}
+.citations-title{font-weight:600;margin-bottom:2px;color:var(--vscode-descriptionForeground)}
+.citations ol{margin:0;padding-left:18px}
+.citations a{color:var(--vscode-textLink-foreground);text-decoration:none;word-break:break-all}
+.citations a:hover{text-decoration:underline}

@@ -164,9 +164,26 @@
         if (m.completionTokens) { parts.push(m.completionTokens + ' tok'); }
         if (m.reasoningTokens) { parts.push(m.reasoningTokens + ' reasoning'); }
         if (m.cachedTokens) { parts.push(m.cachedTokens + ' cached'); }
+        if (m.inputTokens) { parts.push(Math.round(m.inputTokens / 1000) + 'k ctx'); }
+        if (m.costUsd) { parts.push('$' + (m.costUsd < 0.01 ? m.costUsd.toFixed(4) : m.costUsd.toFixed(3))); }
         if (m.latencyMs) { parts.push((m.latencyMs / 1000).toFixed(1) + 's'); }
         const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = parts.join(' · '); foot.appendChild(meta);
       }
+    }
+    if (extra && Array.isArray(extra.citations) && extra.citations.length) {
+      const box = document.createElement('div'); box.className = 'citations';
+      const h = document.createElement('div'); h.className = 'citations-title'; h.textContent = 'Sources'; box.appendChild(h);
+      const ol = document.createElement('ol');
+      extra.citations.forEach((c) => {
+        if (!c || typeof c.url !== 'string' || !/^https?:\/\//i.test(c.url)) { return; }
+        const li = document.createElement('li'); const a = document.createElement('a');
+        a.href = c.url; a.title = c.url;
+        a.addEventListener('click', (ev) => { ev.preventDefault(); vscode.postMessage({ type: 'openLink', url: c.url }); });
+        let label = c.url; try { const u = new URL(c.url); label = u.hostname.replace(/^www\./, '') + (u.pathname.length > 1 ? u.pathname : ''); } catch (e) { /* keep url */ }
+        a.textContent = label.length > 80 ? label.slice(0, 79) + '…' : label;
+        li.appendChild(a); ol.appendChild(li);
+      });
+      box.appendChild(ol); t.el.appendChild(box);
     }
     t.el.appendChild(foot);
     if (state.streaming === t.id) { state.streaming = null; setSendMode(false); }
@@ -208,6 +225,10 @@
   $('clear-btn').addEventListener('click', () => vscode.postMessage({ type: 'clearChat' }));
   $('setkey-btn').addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
   $('agent').addEventListener('change', (e) => vscode.postMessage({ type: 'setAgent', enabled: e.target.checked }));
+  function setToggle(id, on, disabled) { const b = $(id); b.setAttribute('aria-pressed', String(!!on)); b.classList.toggle('on', !!on); b.disabled = !!disabled; }
+  [['web-toggle', 'web'], ['x-toggle', 'x']].forEach(([id, tool]) => {
+    $(id).addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; setToggle(id, on); vscode.postMessage({ type: 'setServerTool', tool, enabled: on }); });
+  });
   const sp = $('settings-panel');
   $('settings-btn').addEventListener('click', (e) => { const o = sp.classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(o)); });
   const modelIn = $('model');
@@ -253,7 +274,8 @@
         if (m.theme) { document.body.classList.toggle('theme-galactic', m.theme !== 'vscode'); document.body.classList.toggle('theme-vscode', m.theme === 'vscode'); }
         if (m.temperature !== undefined) { $('temperature').value = m.temperature; $('temperature-val').textContent = m.temperature; }
         if (m.maxTokens !== undefined) { $('maxTokens').value = m.maxTokens; $('maxTokens-val').textContent = m.maxTokens; }
-        $('agent').checked = !!m.agent; break;
+        $('agent').checked = !!m.agent;
+        setToggle('web-toggle', m.webSearch, m.api === 'chat'); setToggle('x-toggle', m.xSearch, m.api === 'chat'); break;
       case 'models': setModelOptions(m.models || [], m.current); modelIn.title = 'Grok model' + (m.source === 'fallback' ? ' (built-in list: ' + (m.error || 'offline') + ')' : m.source === 'live' ? ' (live from xAI)' : ''); break;
       case 'keyState': $('welcome').hidden = !!m.hasKey; document.body.classList.toggle('no-key', !m.hasKey); break;
       case 'userMessage': addUser(m.text, m.chips); break;
@@ -275,7 +297,7 @@
         }
         break;
       }
-      case 'streamDone': finishTurn(turns.get(m.id), 'done', { meta: m.meta }); break;
+      case 'streamDone': finishTurn(turns.get(m.id), 'done', { meta: m.meta, citations: m.citations }); break;
       case 'streamStopped': finishTurn(turns.get(m.id), 'stopped'); break;
       case 'streamError': finishTurn(turns.get(m.id), 'error', { msg: m.msg, kind: m.kind }); break;
       case 'editorState': state.hasEditor = !!m.hasEditor; state.editorPath = m.path;

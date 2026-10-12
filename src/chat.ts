@@ -1,15 +1,17 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
-import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL } from './config';
-import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool } from './agent/tools';
+import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL, apiMode, serverTools } from './config';
+import { streamResponse, compactInput, InputItem, ResponseTool } from './xai/responses';
+import { runResponsesLoop, ConversationState } from './agent/responsesLoop';
+import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool, toResponsesTools } from './agent/tools';
 import { runToolLoop } from './agent/loop';
 import { proposeEdit, proposeRangeEdit } from './proposals';
 import { setBusy } from './status';
 import { listModels, ModelInfo } from './xai/models';
 
-const MAX_FILE_CHARS = 100_000;
-const MAX_HISTORY = 40;
+/** Legacy Chat Completions path only: the Responses path keeps full history server-side and compacts instead. */
+const MAX_HISTORY_CHAT = 200;
 
 export const SYSTEM_PROMPT =
   'You are Grok, built by xAI, running inside VS Code through the VSGrok extension as a coding agent. ' +
@@ -43,6 +45,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private ready = false;
   private readyWaiters: (() => void)[] = [];
   private history: ChatMessage[] = [];
+  /** Responses API conversation: verbatim local items + previous_response_id. */
+  private conv: ConversationState = { items: [] };
+  /** System prompt variant the current Responses chain was started with ('agent' | 'ask'). */
+  private convMode?: string;
+  private lastInputTokens = 0;
   private contexts: ContextItem[] = [];
   private implicitSel?: ContextItem;
   private abort?: AbortController;
@@ -84,6 +91,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div id="header"><div class="header-left"><img class="logo" src="${u('grok-icon.png')}" alt="" width="20" height="20"><span class="brand">Grok</span><span class="brand-sub">for VS Code</span></div>
 <div class="header-right">
 <select id="model" class="h-select" aria-label="Grok model" title="Grok model"></select>
+<button id="web-toggle" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
+<button id="x-toggle" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
 <label class="agent-toggle" title="Agent: let Grok propose edits (you Accept each diff) and request terminal commands (you confirm). Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
 <button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
 <button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
@@ -127,11 +136,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'query': if (typeof m.text === 'string') { await this.send(m.text, Array.isArray(m.images) ? m.images.filter((s: unknown) => typeof s === 'string' && /^data:image\/(png|jpe?g);base64,/.test(s as string)) : undefined); } break;
       case 'stop': this.stop(); break;
       case 'regenerate': if (this.lastUser && !this.busy) {
+        if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev }; this.convMode = this.preTurn.mode; }
         while (this.history.length && this.history[this.history.length - 1].role !== 'user') { this.history.pop(); }
         this.history.pop();
         await this.send(this.lastUser.text, this.lastUser.images);
       } break;
-      case 'clearChat': this.stop(); this.history = []; this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
+      case 'clearChat': this.stop(); this.history = []; this.resetConv(); this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
       case 'updateSettings': await this.updateSettings(m); break;
       case 'setApiKey': await vscode.commands.executeCommand('vsgrok.setApiKey'); break;
       case 'getApiKey': await vscode.commands.executeCommand('vsgrok.signIn'); break;
@@ -152,7 +162,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'pinContext': if (this.implicitSel && this.implicitSel.id === m.id) { this.contexts.push({ ...this.implicitSel, implicit: false, id: `c${++this.seq}` }); this.pushContexts(); } break;
       case 'removeContext': this.contexts = this.contexts.filter(c => c.id !== m.id); this.pushContexts(); break;
       case 'setAgent': this.agentMode = !!m.enabled; break;
+      case 'setServerTool': {
+        const key = ({ web: 'tools.webSearch', x: 'tools.xSearch', code: 'tools.codeExecution' } as Record<string, string>)[String(m.tool)];
+        if (key) { await cfg().update(key, !!m.enabled, vscode.ConfigurationTarget.Global); this.pushSettings(); }
+        break;
+      }
       case 'copyMessage': break;
+      case 'openLink': if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) { await vscode.env.openExternal(vscode.Uri.parse(m.url)); } break;
     }
   }
 
@@ -168,7 +184,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   pushSettings() {
     const c = cfg();
-    this.post({ type: 'settings', model: c.get('model') || DEFAULT_MODEL, temperature: c.get('temperature'), maxTokens: c.get('maxTokens'), agent: this.agentMode, theme: c.get('theme') === 'vscode' ? 'vscode' : 'galactic' });
+    this.post({ type: 'settings', model: c.get('model') || DEFAULT_MODEL, temperature: c.get('temperature'), maxTokens: c.get('maxTokens'), agent: this.agentMode, api: apiMode(), webSearch: !!c.get('tools.webSearch'), xSearch: !!c.get('tools.xSearch'), codeExecution: !!c.get('tools.codeExecution'), theme: c.get('theme') === 'vscode' ? 'vscode' : 'galactic' });
   }
 
   async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
@@ -244,7 +260,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         const doc = await vscode.workspace.openTextDocument(c.uri);
         let text = c.range ? doc.getText(c.range) : doc.getText();
-        if (text.length > MAX_FILE_CHARS) { text = text.slice(0, MAX_FILE_CHARS) + `\n…[truncated at ${MAX_FILE_CHARS} chars]`; }
+        const cap = clampNum(cfg().get('context.maxFileChars'), 10_000, 2_000_000, 1_000_000);
+        if (text.length > cap) { text = text.slice(0, cap) + `\n…[truncated at ${cap} chars]`; }
         const where = c.range ? ` lines ${c.range.start.line + 1}-${c.range.end.line + 1}` : '';
         parts.push(`[${c.kind === 'selection' ? 'Selection' : 'File'}: ${rel}${where}]\n\`\`\`${doc.languageId}\n${text}\n\`\`\``);
       } catch (e) { parts.push(`[Could not read ${rel}: ${(e as Error).message}]`); }
@@ -289,23 +306,138 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let full = await this.resolveTags(text);
     const ctxText = await this.renderContext(attached);
     if (ctxText) { full += '\n\n--- Attached context ---\n' + ctxText; }
-    const content: ChatMessage['content'] = images?.length
-      ? [{ type: 'text', text: full } as TextPart, ...images.map(u => ({ type: 'image_url', image_url: { url: u } } as ImagePart))]
-      : full;
-    this.history.push({ role: 'user', content });
 
     this.abort = new AbortController();
     this.cts = new vscode.CancellationTokenSource();
     const aid = `a${this.seq}`;
     this.post({ type: 'streamStart', id: aid });
     setBusy(true);
+    try {
+      if (apiMode() === 'chat') { await this.sendChat(aid, full, images); }
+      else { await this.sendResponses(aid, full, images); }
+    } finally {
+      this.busy = false; this.abort = undefined; this.cts?.dispose(); this.cts = undefined;
+      setBusy(false);
+    }
+  }
+
+  private resetConv() { this.conv = { items: [] }; this.convMode = undefined; this.lastInputTokens = 0; this.preTurn = undefined; }
+  private preTurn?: { len: number; prev?: string; mode?: string };
+
+  /** Responses API turn: previous_response_id chaining, encrypted reasoning passed back, server-side tools, citations. */
+  private async sendResponses(aid: string, full: string, images?: string[]) {
+    const t0 = Date.now();
+    const agent = this.agentMode;
+    const mode = agent ? 'agent' : 'ask';
+    const c = cfg();
+    const store = c.get<boolean>('responses.store') ?? true;
+    const maxSteps = clampNum(c.get('agent.maxSteps'), 1, 50, 15);
+    const cts = this.cts!;
+    const signal = this.abort!.signal;
+    const base = await requestOptions(this.ctx, { signal, convId: this.convId });
+
+    // Compact long chats before the next turn (POST /v1/responses/compact), then continue from the compaction item.
+    const compactAt = clampNum(c.get('responses.compactAtTokens'), 0, 10_000_000, 300_000);
+    if (compactAt && this.lastInputTokens >= compactAt && this.conv.items.length > 2) {
+      this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'running', label: 'Compacting long conversation…' });
+      try {
+        const r = await compactInput({ ...base, model: base.model }, this.conv.items);
+        this.conv = { items: r.output };
+        this.lastInputTokens = 0;
+        this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'done', label: `Compacted conversation${r.dropped ? ` (${r.dropped} messages folded)` : ''}` });
+      } catch (e) {
+        this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'error', label: 'Compaction failed; continuing with full history', detail: (e as Error).message });
+      }
+    }
+
+    const content: InputItem['content'] = images?.length
+      ? [{ type: 'input_text', text: full }, ...images.map(u => ({ type: 'input_image', image_url: u }))]
+      : full;
+    const sysText = SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT);
+    const newInput: InputItem[] = [];
+    // `instructions` cannot be combined with previous_response_id, so the system prompt is a system message in input.
+    // On a fresh chain it opens the conversation; when Agent is toggled mid-chat a new system message states the change.
+    if (!this.conv.items.length) { newInput.push({ role: 'system', content: sysText }); }
+    else if (this.convMode !== mode) { newInput.push({ role: 'system', content: agent ? 'Update:' + AGENT_PROMPT : 'Update:' + NO_AGENT_PROMPT }); }
+    newInput.push({ role: 'user', content });
+    this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode };
+    this.convMode = mode;
+
+    const fnTools = toResponsesTools(agent ? TOOL_SPECS : READ_TOOL_SPECS);
+    const tools: ResponseTool[] = [...fnTools, ...serverTools()];
+    let tid = 0; let thinking = '';
+    const ids = new Map<string, string>();
+    const showThought = (state: 'running' | 'done') => this.post({ type: 'toolEvent', id: aid, toolId: 'think', state, label: state === 'running' ? 'Thinking…' : 'Thought', detail: thinking.length > 8000 ? '…' + thinking.slice(-8000) : thinking });
+    try {
+      const r = await runResponsesLoop({
+        state: this.conv,
+        newInput,
+        tools,
+        maxSteps,
+        useChain: store,
+        isCancelled: () => cts.token.isCancellationRequested || signal.aborted,
+        request: (input, prev, ts) => streamResponse({
+          ...base,
+          input,
+          previousResponseId: prev,
+          tools: ts,
+          maxOutputTokens: base.maxTokens,
+          store,
+          // With store=false the encrypted reasoning must come back to us so it can be resent (docs: reasoning#encrypted-reasoning-content).
+          include: store ? undefined : ['reasoning.encrypted_content'],
+          onContent: (delta) => this.post({ type: 'streamChunk', id: aid, delta }),
+          onReasoning: (delta) => { thinking += delta; showThought('running'); },
+          onServerTool: (item, st) => {
+            const key = 'srv-' + String(item.id ?? item.type).replace(/[^\w-]/g, '').slice(0, 60);
+            this.post({ type: 'toolEvent', id: aid, toolId: key, state: st === 'running' ? 'running' : (item.status === 'failed' ? 'error' : 'done'), label: serverToolLabel(item, st === 'done') });
+          },
+        }).then(res => { if (thinking) { showThought('done'); } return res; }),
+        execute: (name, args) => {
+          if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
+            return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
+          }
+          return executeTool(name, args, cts.token);
+        },
+        onToolStart: (call, args) => {
+          const t = `t${++tid}`; ids.set(call.call_id, t);
+          this.post({ type: 'toolEvent', id: aid, toolId: t, state: 'running', label: toolLabel(call.name, args) });
+        },
+        onToolEnd: (call, args, out) => {
+          const failed = /^(Error:|Unknown tool|Tool .* is not available)/.test(out);
+          this.post({ type: 'toolEvent', id: aid, toolId: ids.get(call.call_id), state: failed ? 'error' : 'done', label: toolLabel(call.name, args, true), detail: out.length > 4000 ? out.slice(0, 4000) + '\n…' : out });
+        },
+        onStepEnd: (_s, res) => { if (res.functionCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); } },
+      });
+      this.lastInputTokens = r.lastInputTokens;
+      if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
+      this.post({ type: 'streamDone', id: aid, meta: {
+        latencyMs: Date.now() - t0, completionTokens: r.outputTokens || undefined, cachedTokens: r.cachedTokens || undefined,
+        reasoningTokens: r.reasoningTokens || undefined, inputTokens: r.lastInputTokens || undefined,
+        costUsd: r.costTicks ? r.costTicks / 1e10 : undefined, model: base.model, api: 'responses',
+      }, citations: r.citations.slice(0, 50) });
+    } catch (e) {
+      const err = e as GrokApiError;
+      if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
+      else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic' }); }
+      // Roll back to the last consistent state so no function_call is left without its output.
+      this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev };
+      this.convMode = this.preTurn.mode;
+    }
+  }
+
+  /** Legacy Chat Completions turn (vsgrok.api = "chat"). */
+  private async sendChat(aid: string, full: string, images?: string[]) {
+    const content: ChatMessage['content'] = images?.length
+      ? [{ type: 'text', text: full } as TextPart, ...images.map(u => ({ type: 'image_url', image_url: { url: u } } as ImagePart))]
+      : full;
+    this.history.push({ role: 'user', content });
     const t0 = Date.now();
     try {
       const agent = this.agentMode;
       const sys: ChatMessage = { role: 'system', content: SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT) };
       const maxSteps = clampNum(cfg().get('agent.maxSteps'), 1, 50, 15);
-      const cts = this.cts;
-      const signal = this.abort.signal;
+      const cts = this.cts!;
+      const signal = this.abort!.signal;
       let tid = 0; let cached = 0; let reasoningTok = 0; let thinking = '';
       const ids = new Map<string, string>();
       const r = await runToolLoop({
@@ -355,10 +487,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const last = this.history[this.history.length - 1];
       if (last?.role === 'assistant' && last.tool_calls?.length) { this.history.pop(); }
     } finally {
-      while (this.history.length > MAX_HISTORY) { this.history.shift(); }
+      while (this.history.length > MAX_HISTORY_CHAT) { this.history.shift(); }
       while (this.history.length && this.history[0].role !== 'user') { this.history.shift(); }
-      this.busy = false; this.abort = undefined; this.cts?.dispose(); this.cts = undefined;
-      setBusy(false);
     }
   }
 
@@ -394,6 +524,18 @@ export function toolLabel(name: string, a: unknown, done = false): string {
     case 'propose_edit': return `${done ? 'Proposed edit to' : 'Proposing edit to'} ${s(o.path)}`;
     case 'run_command': return `${done ? 'Ran' : 'Running'} \`${s(o.command)}\``;
     default: return `${name}`;
+  }
+}
+
+/** Label for a server-side tool item (web_search_call, x_search_call, code_interpreter_call, …). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function serverToolLabel(item: any, done = false): string {
+  const q = typeof item?.action?.query === 'string' ? ` "${item.action.query.slice(0, 100)}"` : '';
+  switch (item?.type) {
+    case 'web_search_call': return (done ? 'Searched the web' : 'Searching the web…') + q;
+    case 'x_search_call': return (done ? 'Searched X' : 'Searching X…') + q;
+    case 'code_interpreter_call': return done ? 'Ran code in xAI sandbox' : 'Running code in xAI sandbox…';
+    default: return `${String(item?.type ?? 'server tool').replace(/_call$/, '').replace(/_/g, ' ')}${done ? '' : '…'}`;
   }
 }
 
