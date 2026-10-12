@@ -103,6 +103,8 @@ let autoPolicy: AutoPolicy | undefined;
 // Only approvals requested from inside a task's own tool calls may be auto-approved (not Apply/Fix clicks meanwhile).
 const taskScope = new AsyncLocalStorage<true>();
 export function runInTaskScope<T>(fn: () => Promise<T>): Promise<T> { return taskScope.run(true, fn); }
+/** True inside a Run task's async scope (not for user clicks made while a task runs). */
+export function inTaskScope(): boolean { return !!taskScope.getStore(); }
 export function setAutoPolicy(p: AutoPolicy | undefined): void { autoPolicy = p; }
 
 /** Rough added/removed line counts for the card summary (multiset line diff). */

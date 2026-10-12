@@ -727,6 +727,12 @@ suite('VSGrok in VS Code', () => {
       await chat.testReceive({ type: 'query', text: 'remember xai-ABCDEFGHIJKLMNOP for the parser' }); await idle();
       await chat.saveNow();
       const firstId: string = chat['chatId'];
+      // FM5: by default only the transcript is saved (no model context).
+      const raw0 = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(chat['ctx'].globalStorageUri, 'chats', `${firstId}.json`))).toString());
+      assert.strictEqual(raw0.conv, undefined); assert.strictEqual(raw0.messages.length, 2);
+      await vscode.workspace.getConfiguration('vsgrok').update('history.saveContext', true, vscode.ConfigurationTarget.Global);
+      await chat.saveNow();
+      chat['contexts'] = [{ id: 'cx1', kind: 'file', label: 'only-in-tab-1.ts' }];
       const hits = await chat.store.list('parser');
       assert.strictEqual(hits[0].id, firstId); assert.strictEqual(hits[0].title, 'remember [redacted] for the parser');
       const raw = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(chat['ctx'].globalStorageUri, 'chats', `${firstId}.json`))).toString();
@@ -734,11 +740,13 @@ suite('VSGrok in VS Code', () => {
       const lastResp = JSON.parse(raw).conv.previousResponseId as string; assert.match(lastResp, /^resp_/);
       // Second tab.
       await chat.testReceive({ type: 'newTab' });
+      assert.deepStrictEqual(chat['contexts'], [], 'FM6: context chips stay with their tab');
       assert.deepStrictEqual(posts('transcript').at(-1).messages, []);
       assert.strictEqual(posts('tabs').at(-1).tabs.length, 2);
       await chat.testReceive({ type: 'query', text: 'second chat about docker' }); await idle();
       // Switch back: transcript re-rendered, next turn chains on the first chat's response.
       await chat.testReceive({ type: 'switchTab', id: firstId });
+      assert.strictEqual((chat['contexts'] as { label?: string }[])[0]?.label, 'only-in-tab-1.ts'); chat['contexts'] = []; chat['pushContexts']();
       assert.strictEqual(posts('transcript').at(-1).messages.length, 2);
       assert.strictEqual(posts('tabs').at(-1).active, firstId);
       await chat.testReceive({ type: 'query', text: 'follow up' }); await idle();
@@ -786,6 +794,7 @@ suite('VSGrok in VS Code', () => {
       await chat.testReceive({ type: 'newTab' });
       assert.match(posts('toast')[t0].msg, /Wait for Grok to finish/);
       chat['busy'] = false;
+      await vscode.workspace.getConfiguration('vsgrok').update('history.saveContext', undefined, vscode.ConfigurationTarget.Global);
     });
   });
 

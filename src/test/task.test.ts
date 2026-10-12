@@ -65,3 +65,11 @@ test('approvals: auto policy short-circuits the card and selects every non-refus
   assert.equal((await requestDecision(p2)).ok, false); assert.equal(seen.length, 2);
   setAutoPolicy(undefined); setApprover(undefined);
 });
+
+test('FM4: task progress says when cost is unknown or partial', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const cards = require('../../media/webview/cards.js');
+  assert.match(cards.taskProgressText({ steps: 2, maxSteps: 40, tokens: 1000, costMissing: 2 }), /cost not reported: token budget only/);
+  assert.match(cards.taskProgressText({ steps: 2, maxSteps: 40, tokens: 1000, costUsd: 0.5, costMissing: 1 }), /≥ \$0\.50/);
+  assert.doesNotMatch(cards.taskProgressText({ steps: 2, maxSteps: 40, tokens: 1000, costUsd: 0.5 }), /≥|not reported/);
+});

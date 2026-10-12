@@ -54,7 +54,7 @@ const TASK_PROMPT =
 
 interface TaskRun {
   id: string; goal: string; tracker: TaskTracker; started: number; maxSteps: number;
-  steps: number; tokens: number; costUsd?: number; autoApproved: number; asked: number; outcome?: string; execDirty?: boolean;
+  steps: number; tokens: number; costUsd?: number; costMissing?: number; autoApproved: number; asked: number; outcome?: string; execDirty?: boolean;
 }
 
 /** Per-tab chat state that is swapped when switching tabs or reopening a saved chat. */
@@ -64,6 +64,8 @@ interface ChatSession {
   history: ChatMessage[]; conv: ConversationState; convMode?: string; lastInputTokens: number;
   lastUser?: { text: string; images?: string[]; hidden?: string; display?: string }; meter: MeterState; noStore: boolean; convId: string; rulesHash?: string;
   preTurn?: { len: number; prev?: string; mode?: string };
+  /** FM6: attached context chips and per-turn flags belong to their tab. */
+  contexts?: ContextItem[]; editedThisTurn?: boolean; planAppliedThisTurn?: boolean;
 }
 export const MAX_TABS = 8;
 
@@ -283,7 +285,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Persist the active chat (no-op when empty). */
-  dispose() { void this.saveNow(); }
+  dispose(): Promise<void> { return this.saveNow(); }
 
   async saveNow(): Promise<void> {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; }
@@ -291,7 +293,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const rec: ChatRecord = {
       v: 1, id: this.chatId, title: this.chatTitle, titled: this.chatTitled || undefined, created: this.chatCreated, updated: Date.now(),
       model: cfg().get<string>('model') || DEFAULT_MODEL, messages: this.transcript,
-      conv: apiMode() === 'responses' ? { items: this.conv.items, previousResponseId: this.conv.previousResponseId } : undefined,
+      // FM5: by default only the transcript is saved (no attached files, tool outputs, diffs or terminal output);
+      // the model context is rebuilt from it on reopen. vsgrok.history.saveContext opts in to full resume.
+      conv: apiMode() === 'responses' && cfg().get<boolean>('history.saveContext', false) ? { items: this.conv.items, previousResponseId: this.conv.previousResponseId } : undefined,
       noStore: this.noStore || undefined, convId: this.convId,
     };
     try { await this.store.save(rec); } catch (e) { diag('history.saveError', { msg: (e as Error).message }); }
@@ -300,12 +304,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private snapshot(): ChatSession {
     return { id: this.chatId, title: this.chatTitle, titled: this.chatTitled, created: this.chatCreated, transcript: this.transcript,
       history: this.history, conv: this.conv, convMode: this.convMode, lastInputTokens: this.lastInputTokens, lastUser: this.lastUser,
-      meter: this.meter, noStore: this.noStore, convId: this.convId, rulesHash: this.rulesHash, preTurn: this.preTurn };
+      meter: this.meter, noStore: this.noStore, convId: this.convId, rulesHash: this.rulesHash, preTurn: this.preTurn,
+      contexts: this.contexts, editedThisTurn: this.editedThisTurn, planAppliedThisTurn: this.planAppliedThisTurn };
   }
   private restore(x: ChatSession) {
     this.chatId = x.id; this.chatTitle = x.title; this.chatTitled = x.titled; this.chatCreated = x.created; this.transcript = x.transcript;
     this.history = x.history; this.conv = x.conv; this.convMode = x.convMode; this.lastInputTokens = x.lastInputTokens; this.lastUser = x.lastUser;
     this.meter = x.meter; this.noStore = x.noStore; this.convId = x.convId; this.rulesHash = x.rulesHash; this.preTurn = x.preTurn;
+    this.contexts = x.contexts ?? []; this.editedThisTurn = !!x.editedThisTurn; this.planAppliedThisTurn = !!x.planAppliedThisTurn;
+    this.pushContexts();
   }
   private freshSession(): ChatSession {
     return { id: newChatId(), title: 'New chat', titled: false, created: Date.now(), transcript: [], history: [], conv: { items: [] }, lastInputTokens: 0, meter: emptyMeter(), noStore: false, convId: newConvId() };
@@ -795,6 +802,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const tracker = new TaskTracker();
     const t: TaskRun = { id: `task${++this.taskSeq}-${Date.now().toString(36)}`, goal, tracker, started: Date.now(), maxSteps: clampNum(c.get('agent.task.maxSteps'), 1, 200, 40), steps: 0, tokens: 0, autoApproved: 0, asked: 0 };
     this.task = t;
+    const agentBefore = this.agentMode;
     this.agentMode = true; this.pushSettings();
     setTaskTracker(tracker);
     setAutoPolicy(req => this.autoPolicy(req));
@@ -804,8 +812,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       setAutoPolicy(undefined); setTaskTracker(undefined);
       const files = await tracker.finish();
       if (files.length) { this.taskTrackers.set(t.id, tracker); while (this.taskTrackers.size > 5) { this.taskTrackers.delete(this.taskTrackers.keys().next().value as string); } }
-      this.post({ type: 'taskEnd', id: t.id, outcome: t.outcome ?? 'done', files, steps: t.steps, tokens: t.tokens, costUsd: t.costUsd, autoApproved: t.autoApproved, asked: t.asked, ms: Date.now() - t.started });
+      this.post({ type: 'taskEnd', id: t.id, outcome: t.outcome ?? 'done', files, steps: t.steps, tokens: t.tokens, costUsd: t.costUsd, costMissing: t.costMissing, autoApproved: t.autoApproved, asked: t.asked, ms: Date.now() - t.started });
       this.task = undefined;
+      if (this.agentMode !== agentBefore) { this.agentMode = agentBefore; this.pushSettings(); } // FL4
     }
   }
 
@@ -848,7 +857,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private pushTask(label?: string) {
     const t = this.task;
     if (!t) { return; }
-    this.post({ type: 'taskProgress', id: t.id, steps: t.steps, maxSteps: t.maxSteps, tokens: t.tokens, costUsd: t.costUsd, autoApproved: t.autoApproved, asked: t.asked, label });
+    this.post({ type: 'taskProgress', id: t.id, steps: t.steps, maxSteps: t.maxSteps, tokens: t.tokens, costUsd: t.costUsd, costMissing: t.costMissing, autoApproved: t.autoApproved, asked: t.asked, label });
   }
 
   private async undoTask(id: string) {
@@ -967,6 +976,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         budget: task ? (acc) => {
           task.tokens = acc.inputTokens + acc.outputTokens;
           task.costUsd = acc.costMissing >= task.steps && task.steps > 0 ? undefined : acc.costTicks / 1e10;
+          task.costMissing = acc.costMissing;
           return budgetExceeded({ tokens: task.tokens, costUsd: task.costUsd }, limits);
         } : undefined,
         onToolEnd: (call, args, out) => {
@@ -985,7 +995,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       this.lastInputTokens = r.lastInputTokens;
       if (task) {
-        task.tokens = r.inputTokens + r.outputTokens; task.costUsd = r.costMissing >= r.steps ? undefined : r.costTicks / 1e10;
+        task.tokens = r.inputTokens + r.outputTokens; task.costUsd = r.costMissing >= r.steps ? undefined : r.costTicks / 1e10; task.costMissing = r.costMissing;
         task.outcome = r.stopReason ? 'budget' : r.hitStepCap ? 'steps' : 'done';
         if (r.stopReason) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Stopped: ${r.stopReason} (vsgrok.agent.task.*)._` }); }
       }

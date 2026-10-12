@@ -105,7 +105,8 @@
   function fmtTok(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
   function taskProgressText(p) {
     const parts = ['Step ' + (p.steps | 0) + ' of ' + (p.maxSteps | 0), fmtTok(p.tokens) + ' tokens'];
-    if (typeof p.costUsd === 'number') { parts.push('$' + p.costUsd.toFixed(p.costUsd < 0.1 ? 3 : 2)); }
+    if (typeof p.costUsd === 'number') { parts.push((p.costMissing ? '≥ $' : '$') + p.costUsd.toFixed(p.costUsd < 0.1 ? 3 : 2)); }
+    else if (p.costMissing) { parts.push('cost not reported: token budget only'); }
     if (p.autoApproved) { parts.push(p.autoApproved + ' auto-approved'); }
     if (p.asked) { parts.push(p.asked + ' asked'); }
     return parts.join(' · ');

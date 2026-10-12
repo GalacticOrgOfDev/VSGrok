@@ -1,5 +1,6 @@
 // Records the original bytes of every file a background task touches, so "Undo all" can restore them.
 import * as vscode from 'vscode';
+import { inTaskScope } from './approvals';
 import { hashBytes } from './planCore';
 
 interface Snap { uri: vscode.Uri; before: Uint8Array | null; afterHash?: string | null }
@@ -50,7 +51,9 @@ export class TaskTracker {
 
 let active: TaskTracker | undefined;
 export function setTaskTracker(t: TaskTracker | undefined) { active = t; }
+/** FM3: only writes made by the task itself (inside its async scope) are tracked for Undo all. */
 export async function trackBefore(...uris: (vscode.Uri | undefined)[]): Promise<void> {
+  if (!inTaskScope()) { return; }
   if (!active) { return; }
   for (const u of uris) { if (u) { await active.before(u); } }
 }

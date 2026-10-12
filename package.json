@@ -629,6 +629,12 @@
           "default": true,
           "markdownDescription": "Save chats on this machine (VS Code global storage) after each answer so they can be searched, reopened, renamed, deleted and exported. API keys are never saved; text is redacted for secret-looking tokens and images are not kept. Turning this off stops saving; existing chats stay until deleted."
         },
+        "vsgrok.history.saveContext": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Also save each chat's full model context (attached file text, tool outputs, git diffs, terminal output, encrypted reasoning) so a reopened chat resumes exactly. Off by default: only the visible transcript is saved and reopened chats are rebuilt from it."
+        },
         "vsgrok.mcp.servers": {
           "type": "object",
           "default": {},

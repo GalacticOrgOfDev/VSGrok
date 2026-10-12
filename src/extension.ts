@@ -19,6 +19,7 @@ import { buildCommandPrompt, CodeAction, fixDiagnostic, GrokQuickFixProvider } f
 import { TerminalHelper } from './terminalHelper';
 import { generateCommitMessage, reviewChanges, draftPrDescription } from './git';
 
+let chatRef: ChatViewProvider | undefined;
 export function activate(context: vscode.ExtensionContext) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let testApi: any;
@@ -26,6 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
   initStatus(context);
   registerProposals(context);
   const chat = new ChatViewProvider(context);
+  chatRef = chat;
   context.subscriptions.push({ dispose: () => chat.dispose() });
   const reg = (id: string, fn: (...a: never[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
@@ -178,4 +180,5 @@ export function activate(context: vscode.ExtensionContext) {
   return testApi;
 }
 
-export function deactivate() { /* disposables handled by context */ }
+/** L2: give the last chat save a chance to finish (VS Code awaits a returned promise briefly). */
+export function deactivate(): Promise<void> | undefined { return chatRef?.saveNow(); }
