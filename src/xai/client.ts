@@ -29,6 +29,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   onContent?: (delta: string) => void;
+  onReasoning?: (delta: string) => void;
+  /** reasoning_effort for reasoning models (docs.x.ai/developers/model-capabilities/text/reasoning). Omitted when undefined. */
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /** Sent as x-grok-conv-id to route a conversation to the same server for prompt-cache hits. */
+  convId?: string;
 }
 
 export interface StreamResult {
@@ -79,6 +84,7 @@ export function streamChat(messages: ChatMessage[], opts: RequestOptions): Promi
   };
   if (opts.temperature !== undefined) { payload.temperature = opts.temperature; }
   if (opts.maxTokens) { payload.max_tokens = opts.maxTokens; }
+  if (opts.reasoningEffort) { payload.reasoning_effort = opts.reasoningEffort; }
   if (opts.tools?.length) { payload.tools = opts.tools; payload.tool_choice = 'auto'; }
   const body = JSON.stringify(payload);
   const url = new URL(opts.baseUrl.replace(/\/+$/, '') + '/chat/completions');
@@ -104,6 +110,7 @@ export function streamChat(messages: ChatMessage[], opts: RequestOptions): Promi
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
         'Content-Length': Buffer.byteLength(body),
+        ...(opts.convId ? { 'x-grok-conv-id': opts.convId } : {}),
       },
     }, (res) => {
       const status = res.statusCode ?? 0;
@@ -117,6 +124,7 @@ export function streamChat(messages: ChatMessage[], opts: RequestOptions): Promi
       const parser = new SseParser((evt) => {
         const d = parseDelta(evt);
         if (d.content) { content += d.content; opts.onContent?.(d.content); }
+        if (d.reasoning) { opts.onReasoning?.(d.reasoning); }
         if (d.toolCalls) { acc.add(d.toolCalls); }
         if (d.finishReason) { finishReason = d.finishReason; }
         if (d.usage) { usage = d.usage; }

@@ -11,6 +11,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Agent** (header toggle, on by default, or *VSGrok: Start Agent Task*) adds the write tools:
   - `propose_edit` — always shown as a diff and applied only if you accept,
   - `run_command` — runs in the workspace root only after you confirm a modal prompt.
+- **Grok reasoning & prompt caching** — `vsgrok.reasoningEffort` sets xAI's `reasoning_effort` (low / medium / high / xhigh; [docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)). If the API streams reasoning text it shows as a collapsible *Thought* line. Each chat sends an `x-grok-conv-id` header so follow-up turns reuse xAI's prompt cache ([docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits)); reasoning and cached token counts appear under each reply.
 - **Inline ghost-text completions** — debounced (default 275 ms), cancelled when you keep typing, toggle with *VSGrok: Toggle Inline Completions* or `vsgrok.inlineCompletions.enabled`.
 - **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar); **Fix with Grok** Quick Fix on diagnostics (lightbulb), applied through the same diff + Accept flow.
 

@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -194,6 +194,12 @@
           "default": 8192,
           "minimum": 1,
           "description": "Maximum tokens per response."
+        },
+        "vsgrok.reasoningEffort": {
+          "type": "string",
+          "enum": ["default", "low", "medium", "high", "xhigh"],
+          "default": "default",
+          "markdownDescription": "`reasoning_effort` for Grok reasoning models (grok-4.5+; `xhigh` on grok-4.6+). `default` omits it (xAI default is `high`). `low` is faster for agentic tool use. Not applied to inline completions. See [xAI reasoning docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)."
         },
         "vsgrok.requestTimeoutSeconds": {
           "type": "number",

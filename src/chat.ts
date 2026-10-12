@@ -51,6 +51,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private lastUser?: { text: string; images?: string[] };
   private seq = 0;
   private agentMode = false;
+  /** Per-chat id sent as x-grok-conv-id so follow-up turns hit xAI's prompt cache. */
+  private convId = newConvId();
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? true;
@@ -129,7 +131,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.history.pop();
         await this.send(this.lastUser.text, this.lastUser.images);
       } break;
-      case 'clearChat': this.stop(); this.history = []; this.post({ type: 'chatCleared' }); break;
+      case 'clearChat': this.stop(); this.history = []; this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
       case 'updateSettings': await this.updateSettings(m); break;
       case 'setApiKey': await vscode.commands.executeCommand('vsgrok.setApiKey'); break;
       case 'getApiKey': await vscode.commands.executeCommand('vsgrok.signIn'); break;
@@ -304,7 +306,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const maxSteps = clampNum(cfg().get('agent.maxSteps'), 1, 50, 15);
       const cts = this.cts;
       const signal = this.abort.signal;
-      let tid = 0;
+      let tid = 0; let cached = 0; let reasoningTok = 0; let thinking = '';
       const ids = new Map<string, string>();
       const r = await runToolLoop({
         system: sys,
@@ -315,8 +317,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         request: async (msgs, tools) => streamChat(msgs, await requestOptions(this.ctx, {
           signal,
           tools: tools.length ? tools : undefined,
+          convId: this.convId,
           onContent: (delta) => this.post({ type: 'streamChunk', id: aid, delta }),
-        })),
+          onReasoning: (delta) => {
+            thinking += delta;
+            this.post({ type: 'toolEvent', id: aid, toolId: 'think', state: 'running', label: 'Thinking…', detail: thinking.length > 8000 ? '…' + thinking.slice(-8000) : thinking });
+          },
+        })).then(res => {
+          cached += res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+          reasoningTok += res.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+          if (thinking) { this.post({ type: 'toolEvent', id: aid, toolId: 'think', state: 'done', label: 'Thought', detail: thinking.length > 8000 ? '…' + thinking.slice(-8000) : thinking }); }
+          return res;
+        }),
         execute: (name, args) => {
           if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
             return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
@@ -334,7 +346,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         onStepEnd: (_s, res) => { if (res.toolCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); } },
       });
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
-      this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, model: cfg().get('model') } });
+      this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, cachedTokens: cached || undefined, reasoningTokens: reasoningTok || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
@@ -384,3 +396,5 @@ export function toolLabel(name: string, a: unknown, done = false): string {
     default: return `${name}`;
   }
 }
+
+function newConvId(): string { return 'vsgrok-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }

@@ -162,6 +162,8 @@
         const m = extra.meta; const parts = [];
         if (m.model) { parts.push(m.model); }
         if (m.completionTokens) { parts.push(m.completionTokens + ' tok'); }
+        if (m.reasoningTokens) { parts.push(m.reasoningTokens + ' reasoning'); }
+        if (m.cachedTokens) { parts.push(m.cachedTokens + ' cached'); }
         if (m.latencyMs) { parts.push((m.latencyMs / 1000).toFixed(1) + 's'); }
         const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = parts.join(' · '); foot.appendChild(meta);
       }

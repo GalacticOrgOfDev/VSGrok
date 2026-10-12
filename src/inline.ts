@@ -13,7 +13,7 @@ export class GrokInlineProvider implements vscode.InlineCompletionItemProvider {
     const delay = clampNum(c.get('inlineCompletions.debounceMs'), 0, 2000, 275);
     await new Promise(r => setTimeout(r, delay));
     if (token.isCancellationRequested) { return; }
-    const opts = await requestOptions(this.ctx);
+    const opts = await requestOptions(this.ctx, { reasoningEffort: undefined });
     if (!opts.apiKey) { return; }
 
     const off = doc.offsetAt(pos);

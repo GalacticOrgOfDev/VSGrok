@@ -19,6 +19,7 @@ export async function requestOptions(ctx: vscode.ExtensionContext, over: Partial
     model: c.get<string>('model') || DEFAULT_MODEL,
     temperature: clampNum(c.get('temperature'), 0, 2, 0.3),
     maxTokens: clampNum(c.get('maxTokens'), 1, 131072, 8192),
+    reasoningEffort: (['low', 'medium', 'high', 'xhigh'] as const).find(v => v === c.get<string>('reasoningEffort')),
     timeoutMs: clampNum(c.get('requestTimeoutSeconds'), 5, 600, 120) * 1000,
     ...over,
   };

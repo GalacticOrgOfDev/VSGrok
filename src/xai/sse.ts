@@ -9,9 +9,11 @@ export interface ToolCall {
 
 export interface StreamDelta {
   content?: string;
+  /** Reasoning text, if the API streams it (delta.reasoning_content). */
+  reasoning?: string;
   toolCalls?: { index: number; id?: string; name?: string; arguments?: string }[];
   finishReason?: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; completion_tokens_details?: { reasoning_tokens?: number } };
 }
 
 /** Incremental SSE line parser. UTF-8 safe across chunk boundaries. */
@@ -51,6 +53,7 @@ export function parseDelta(evt: any): StreamDelta {
   const d = choice?.delta ?? {};
   const out: StreamDelta = {};
   if (typeof d.content === 'string' && d.content) { out.content = d.content; }
+  if (typeof d.reasoning_content === 'string' && d.reasoning_content) { out.reasoning = d.reasoning_content; }
   if (Array.isArray(d.tool_calls)) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     out.toolCalls = d.tool_calls.map((t: any, i: number) => ({
