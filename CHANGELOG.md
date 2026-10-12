@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.0 — 2026-10-12
+**Git help**
+- **Generate Commit Message** (improved from 0.2):
+  - Uses the repo you clicked, otherwise the one selected in Source Control, otherwise the one holding the active file.
+  - Sends your last 10 commit subjects so the message matches the repo's style.
+  - Treats any text already in the commit box as a draft whose intent it keeps.
+  - If you type in the box while Grok is writing, nothing is overwritten; the message goes to the clipboard instead.
+  - Shows progress in the Source Control view instead of a notification.
+- **Review My Changes** (Source Control `…` menu or the palette):
+  - Reviews the staged and unstaged diff against HEAD plus small untracked files.
+  - Results appear in chat grouped high / medium / low, with `[file:line](path#Lnn)` links that open the file at that line.
+  - The chat bubble shows "Review my uncommitted changes"; the diff goes to Grok as attached data.
+- **Draft PR Description:** diffs the branch from its merge-base with `origin/HEAD` (or `origin/main`, `origin/master`, `main`, `master`), including uncommitted work, adds the commit list and diffstat, and returns Markdown with Summary / Changes / Testing / Notes. You choose **Copy to clipboard** or **Save as Markdown file…**.
+- **Secrets:** sections for secret files (`.env*`, keys, credentials, including renames onto them) are dropped before anything is sent, and the prompt lists them as omitted. Key-like strings are redacted. Each file is capped at 20 KB and the whole diff at 120 KB.
+- **Git safety:** git runs read-only (`diff`/`log`/`rev-parse`/`ls-files`) with fsmonitor off and no external diff or textconv drivers, and only in trusted workspaces. Nothing commits, pushes or opens PRs.
+- **Links in answers:** workspace-relative links (`src/a.ts#L12`, `src/a.ts:12`) open the file at that line, subject to the usual secret and outside-workspace checks. http(s) links open in the browser. Other schemes do nothing.
+
 ## 0.12.0 — 2026-10-12
 **MCP (Model Context Protocol) servers**
 - Configure servers in `vsgrok.mcp.servers` (user settings) or in `.vscode/vsgrok-mcp.json` (`{ "servers": { … } }`; `mcpServers` is accepted too).

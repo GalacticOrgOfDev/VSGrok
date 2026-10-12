@@ -844,4 +844,61 @@ suite('VSGrok in VS Code', () => {
       api.mcp.reload(); await api.mcp.ready();
     }
   });
+
+  test('git help: commit message into the SCM box (secrets left out, recent style, draft kept), review in chat with file links, PR description to a file', async function () {
+    this.timeout(90000);
+    const cp = await import('child_process');
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    const cwd = root.fsPath;
+    const g = (...a: string[]) => cp.execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
+    g('add', '-A'); g('commit', '-q', '-m', 'chore: baseline');
+    g('checkout', '-q', '-b', 'feature/git-help');
+    const gitApi = (await vscode.extensions.getExtension('vscode.git')!.activate()).getAPI(1);
+    const repo = await until(() => gitApi.repositories.find((r: { rootUri: vscode.Uri }) => r.rootUri.fsPath === cwd), 30000);
+    const w = (p: string, t: string) => vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, p), Buffer.from(t));
+    await w('gitdemo.ts', 'export const a = 1;\nexport const b = 2;\n');
+    await w('.env', 'SHOULD_NOT_LEAK=1\n');
+    g('add', 'gitdemo.ts', '.env');
+    await withMock('mock-text', async (xai) => {
+      const reqs = async () => (await (await fetch(xai + '/requests')).json()) as unknown[];
+      // 1) commit message (structured output) → SCM input box; user draft passed as a hint.
+      repo.inputBox.value = 'add demo';
+      await rreply(xai, { text: JSON.stringify({ subject: 'feat: add git demo constants', body: ['export a and b'] }) });
+      const n0 = (await reqs()).length;
+      const msg = await vscode.commands.executeCommand('vsgrok.generateCommitMessage', { rootUri: root });
+      assert.strictEqual(msg, 'feat: add git demo constants\n\n- export a and b');
+      assert.strictEqual(repo.inputBox.value, msg);
+      const body = JSON.stringify((await reqs()).slice(n0));
+      assert.match(body, /gitdemo\.ts/); assert.match(body, /chore: baseline/); assert.match(body, /add demo/); assert.match(body, /commit_message/);
+      assert.doesNotMatch(body, /SHOULD_NOT_LEAK/); assert.match(body, /never sent\): \.env/);
+      g('commit', '-q', '-m', 'feat: demo');
+      // 2) review: unstaged edit + untracked file + secret change.
+      await w('gitdemo.ts', 'export const a = 1;\nexport const b = 3;\n');
+      await w('newfile.ts', 'export const fresh = true;\n');
+      await w('.env', 'SHOULD_NOT_LEAK=2\n');
+      await api.chat.testReceive({ type: 'clearChat' }); await idle();
+      await rreply(xai, { text: '**medium** — [gitdemo.ts:2](gitdemo.ts#L2) changed b.' });
+      const n1 = (await reqs()).length; const u0 = posts('userMessage').length;
+      assert.strictEqual(await vscode.commands.executeCommand('vsgrok.reviewChanges', { rootUri: root }), true);
+      await idle();
+      assert.strictEqual(posts('userMessage')[u0].text, 'Review my uncommitted changes');
+      const rb = JSON.stringify((await reqs()).slice(n1));
+      assert.match(rb, /export const b = 3/); assert.match(rb, /newfile\.ts/); assert.match(rb, /#L42/); assert.doesNotMatch(rb, /SHOULD_NOT_LEAK/);
+      assert.strictEqual(await api.chat.openFileLink('gitdemo.ts#L2'), true);
+      const ed = vscode.window.activeTextEditor!;
+      assert.ok(ed.document.uri.path.endsWith('/gitdemo.ts')); assert.strictEqual(ed.selection.start.line, 1);
+      assert.strictEqual(await api.chat.openFileLink('.env'), false);
+      assert.strictEqual(await api.chat.openFileLink('../outside.ts#L1'), false);
+      // 3) PR description vs the base branch (merge-base with master/main), written to a .md file.
+      await rreply(xai, { text: '```markdown\n# Add git demo\n\n## Summary\nDemo.\n```' });
+      const n2 = (await reqs()).length;
+      const target = vscode.Uri.joinPath(root, 'PR_DESCRIPTION.md');
+      const md = await vscode.commands.executeCommand('vsgrok.draftPrDescription', { rootUri: root, target });
+      assert.strictEqual(md, '# Add git demo\n\n## Summary\nDemo.\n');
+      assert.strictEqual(Buffer.from(await vscode.workspace.fs.readFile(target)).toString(), md);
+      const pb = JSON.stringify((await reqs()).slice(n2));
+      assert.match(pb, /feature\/git-help/); assert.match(pb, /feat: demo/); assert.doesNotMatch(pb, /SHOULD_NOT_LEAK/);
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    });
+  });
 });

@@ -1,4 +1,5 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
+import { parseFileLink } from './gitCore';
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
 import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL, apiMode, serverTools } from './config';
@@ -61,7 +62,7 @@ interface ChatSession {
   id: string; title: string; titled: boolean; created: number;
   transcript: TranscriptMsg[];
   history: ChatMessage[]; conv: ConversationState; convMode?: string; lastInputTokens: number;
-  lastUser?: { text: string; images?: string[] }; meter: MeterState; noStore: boolean; convId: string; rulesHash?: string;
+  lastUser?: { text: string; images?: string[]; hidden?: string; display?: string }; meter: MeterState; noStore: boolean; convId: string; rulesHash?: string;
   preTurn?: { len: number; prev?: string; mode?: string };
 }
 export const MAX_TABS = 8;
@@ -94,7 +95,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private abort?: AbortController;
   private cts?: vscode.CancellationTokenSource;
   private busy = false;
-  private lastUser?: { text: string; images?: string[] };
+  private lastUser?: { text: string; images?: string[]; hidden?: string; display?: string };
   private seq = 0;
   private agentMode = false;
   /** Per-chat id sent as x-grok-conv-id so follow-up turns hit xAI's prompt cache. */
@@ -465,7 +466,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.history.pop();
         while (this.transcript.length && this.transcript[this.transcript.length - 1].role !== 'user') { this.transcript.pop(); }
         this.transcript.pop();
-        await this.send(this.lastUser.text, this.lastUser.images);
+        await this.send(this.lastUser.text, this.lastUser.images, { hidden: this.lastUser.hidden, display: this.lastUser.display });
       } break;
       case 'clearChat': {
         this.stop(); await this.saveNow();
@@ -527,6 +528,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('workbench.action.openSettings', key);
         break;
       }
+      case 'openFileLink': if (typeof m.href === 'string') { await this.openFileLink(m.href); } break;
       case 'openLink': if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) { await vscode.env.openExternal(vscode.Uri.parse(m.url)); } break;
     }
   }
@@ -544,6 +546,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   pushSettings() {
     const c = cfg();
     this.post({ type: 'settings', model: c.get('model') || DEFAULT_MODEL, temperature: c.get('temperature'), maxTokens: c.get('maxTokens'), agent: this.agentMode, api: apiMode(), webSearch: !!c.get('tools.webSearch'), xSearch: !!c.get('tools.xSearch'), codeExecution: !!c.get('tools.codeExecution'), theme: c.get('theme') === 'vscode' ? 'vscode' : 'galactic' });
+  }
+
+  /** Open a workspace-relative file link from an answer (src/a.ts#L12), with the usual read checks. */
+  async openFileLink(href: string): Promise<boolean> {
+    const l = parseFileLink(href);
+    if (!l) { return false; }
+    for (const f of vscode.workspace.workspaceFolders ?? []) {
+      const uri = vscode.Uri.joinPath(f.uri, l.path);
+      try { await vscode.workspace.fs.stat(uri); } catch { continue; }
+      const chk = await checkReadable(uri);
+      if (!chk.ok) { this.post({ type: 'toast', msg: `Not opened: ${chk.reason}` }); return false; }
+      const line = Math.max(0, (l.line ?? 1) - 1); const end = Math.max(line, (l.endLine ?? l.line ?? 1) - 1);
+      await vscode.window.showTextDocument(uri, { preview: true, selection: new vscode.Range(line, 0, end, 0), viewColumn: vscode.ViewColumn.One });
+      return true;
+    }
+    this.post({ type: 'toast', msg: `File not found in the workspace: ${l.path}` });
+    return false;
   }
 
   async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
@@ -719,25 +738,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Called by commands: focus the view, wait for the webview handshake, then send. */
-  async injectQuery(text: string, opts: { agent?: boolean } = {}) {
+  async injectQuery(text: string, opts: { agent?: boolean; hidden?: string; display?: string } = {}) {
     await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
     await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
     if (opts.agent !== undefined) { this.agentMode = opts.agent; this.pushSettings(); }
-    await this.send(text);
+    await this.send(text, undefined, { hidden: opts.hidden, display: opts.display });
   }
 
   stop() { this.abort?.abort(); this.cts?.cancel(); this.approvals.cancelAll('cancelled'); }
 
-  private async send(text: string, images?: string[]) {
+  /** extra.hidden is appended to what Grok sees (e.g. a diff) without filling the bubble; extra.display replaces the bubble text. */
+  private async send(text: string, images?: string[], extra: { hidden?: string; display?: string } = {}) {
     if (this.busy) { this.post({ type: 'toast', msg: 'Grok is still answering — press Stop first.' }); return; }
     if (!text.trim() && !images?.length) { return; }
     this.busy = true;
     const id = `m${++this.seq}`;
     const attached = [...this.contexts, ...(this.implicitSel ? [this.implicitSel] : [])];
-    this.post({ type: 'userMessage', id, text, chips: attached.map(c => this.chipOf(c)), images, imageNames: images?.length ? this.pendingImageNames : undefined });
+    this.post({ type: 'userMessage', id, text: extra.display ?? text, chips: attached.map(c => this.chipOf(c)), images, imageNames: images?.length ? this.pendingImageNames : undefined });
     this.contexts = []; this.pushContexts();
-    this.lastUser = { text, images };
+    this.lastUser = { text, images, hidden: extra.hidden, display: extra.display };
     let full = await this.resolveTags(text);
+    if (extra.hidden) { full += '\n\n' + extra.hidden; }
     let ctxText = await this.renderContext(attached);
     if (this.problemsEnabled) { const pc = problemsContext(this.problemUris(attached)); if (pc.text) { ctxText = (ctxText ? ctxText + '\n\n' : '') + pc.text; } }
     if (ctxText) { full += '\n\n--- Attached context ---\n' + ctxText; }

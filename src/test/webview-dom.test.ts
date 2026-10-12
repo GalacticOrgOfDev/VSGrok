@@ -358,3 +358,15 @@ test('MCP approval card: server › tool, source, arguments, Always allow sends 
   const m = sent.find(x => x.type === 'approvalResponse');
   assert.equal(m.decision, 'approve'); assert.equal(m.always, true); assert.equal(cb.disabled, true);
 });
+
+test('answer links: workspace paths post openFileLink, http opens externally, other schemes are inert', async () => {
+  const { d, post, sent } = boot();
+  post({ type: 'streamStart', id: 'a9' });
+  post({ type: 'streamChunk', id: 'a9', delta: 'See [a.ts:2](src/a.ts#L2), [docs](https://x.ai/d) and [bad](command:workbench.action.x).' });
+  post({ type: 'streamDone', id: 'a9', meta: {} });
+  await new Promise(r => setTimeout(r, 20));
+  const links = [...d.querySelectorAll('#messages a')] as HTMLAnchorElement[];
+  const byText = (t: string) => links.find(a => a.textContent === t)!;
+  byText('a.ts:2').click(); byText('docs').click(); byText('bad')?.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.filter(m => m.type === 'openFileLink' || m.type === 'openLink'))), [{ type: 'openFileLink', href: 'src/a.ts#L2' }, { type: 'openLink', url: 'https://x.ai/d' }]);
+});

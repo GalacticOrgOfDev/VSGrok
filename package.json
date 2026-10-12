@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -175,6 +175,18 @@
         "command": "vsgrok.mcpServers",
         "title": "MCP Servers",
         "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.reviewChanges",
+        "title": "Review My Changes",
+        "category": "VSGrok",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "vsgrok.draftPrDescription",
+        "title": "Draft PR Description",
+        "category": "VSGrok",
+        "icon": "$(git-pull-request)"
       }
     ],
     "menus": {
@@ -196,6 +208,16 @@
           "command": "vsgrok.generateCommitMessage",
           "when": "scmProvider == git",
           "group": "navigation"
+        },
+        {
+          "command": "vsgrok.reviewChanges",
+          "when": "scmProvider == git",
+          "group": "vsgrok@1"
+        },
+        {
+          "command": "vsgrok.draftPrDescription",
+          "when": "scmProvider == git",
+          "group": "vsgrok@2"
         }
       ],
       "commandPalette": [

@@ -33,6 +33,15 @@
   function stick(wasNear) { if (wasNear) { messagesEl.scrollTop = messagesEl.scrollHeight; pill.hidden = true; } else { pill.hidden = false; } }
   messagesEl.addEventListener('scroll', () => { if (nearBottom()) { pill.hidden = true; } });
   pill.addEventListener('click', () => { messagesEl.scrollTop = messagesEl.scrollHeight; pill.hidden = true; });
+  // Links in answers: http(s) open externally; workspace paths like src/a.ts#L12 open the file at that line.
+  messagesEl.addEventListener('click', (ev) => {
+    const a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+    if (!a || ev.defaultPrevented) { return; }
+    const href = a.getAttribute('href') || '';
+    ev.preventDefault();
+    if (/^https?:\/\//i.test(href)) { vscode.postMessage({ type: 'openLink', url: href }); }
+    else if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) { vscode.postMessage({ type: 'openFileLink', href }); }
+  });
 
   // ── code blocks ──
   function decorateBlocks(container, lastOpen) {

@@ -38,6 +38,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Chat Completions fallback** — `vsgrok.api: "chat"` switches back to the legacy `/v1/chat/completions` path (no server-side tools, citations or compaction; history is kept locally).
 - **Inline ghost-text completions** — debounced (default 275 ms), cancelled when you keep typing, toggle with *VSGrok: Toggle Inline Completions* or `vsgrok.inlineCompletions.enabled`.
 - **Commands** — Explain / Fix / Add Comments / Write Tests on a selection (streamed into chat); **Generate Commit Message** from the staged diff (button in the Source Control title bar; uses [structured outputs](https://docs.x.ai/developers/model-capabilities/text/structured-outputs) with a `{subject, body[]}` JSON schema); **Fix with Grok** Quick Fix on diagnostics (lightbulb), approved through the same in-chat card.
+- **Git help** (Source Control title bar and `…` menu) — **Generate Commit Message** writes into the commit box, follows your recent commit style and keeps your draft's intent; **Review My Changes** sends the uncommitted diff (staged, unstaged and small new files) to chat for a severity-grouped review with clickable `file:line` links; **Draft PR Description** summarises the branch against `origin/HEAD`/`main` and copies it or saves a `.md`. Secret files (`.env`, keys, credentials) are left out of every diff and key-like strings are redacted. Read-only: VSGrok never commits or pushes.
 
 ## Setup
 

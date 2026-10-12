@@ -3,7 +3,6 @@ import * as vscode from 'vscode';
 import { streamChat } from './xai/client';
 import { requestOptions, apiMode } from './config';
 import { streamResponse } from './xai/responses';
-import { COMMIT_FORMAT, renderCommitMessage } from './xai/commit';
 import { stripFences } from './xai/sse';
 import { proposeRangeEdit } from './proposals';
 import { setBusy } from './status';
@@ -22,8 +21,8 @@ export function buildCommandPrompt(action: CodeAction, code: string, language: s
 }
 
 /** Ask Grok for a one-shot answer with progress + cancel; return text or undefined. Uses the Responses API unless vsgrok.api = "chat". */
-async function oneShot(ctx: vscode.ExtensionContext, title: string, system: string, user: string, textFormat?: Record<string, unknown>): Promise<string | undefined> {
-  return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_p, token) => {
+export async function oneShot(ctx: vscode.ExtensionContext, title: string, system: string, user: string, textFormat?: Record<string, unknown>, location: vscode.ProgressLocation = vscode.ProgressLocation.Notification): Promise<string | undefined> {
+  return vscode.window.withProgress({ location, title, cancellable: location === vscode.ProgressLocation.Notification }, async (_p, token) => {
     const abort = new AbortController();
     const sub = token.onCancellationRequested(() => abort.abort());
     setBusy(true);
@@ -43,26 +42,6 @@ async function oneShot(ctx: vscode.ExtensionContext, title: string, system: stri
       return undefined;
     } finally { sub.dispose(); setBusy(false); }
   });
-}
-
-interface GitRepo { rootUri: vscode.Uri; diff(cached?: boolean): Promise<string>; inputBox: { value: string } }
-
-export async function generateCommitMessage(ctx: vscode.ExtensionContext, arg?: { rootUri?: vscode.Uri }) {
-  const ext = vscode.extensions.getExtension('vscode.git');
-  if (!ext) { void vscode.window.showErrorMessage('The built-in Git extension is not available.'); return; }
-  const api = (ext.isActive ? ext.exports : await ext.activate()).getAPI(1);
-  const repos: GitRepo[] = api.repositories;
-  const repo = (arg?.rootUri && repos.find(r => r.rootUri.toString() === arg.rootUri!.toString())) || repos[0];
-  if (!repo) { void vscode.window.showWarningMessage('No Git repository found.'); return; }
-  let diff = await repo.diff(true);
-  if (!diff.trim()) { void vscode.window.showWarningMessage('No staged changes. Stage files first.'); return; }
-  if (diff.length > 400000) { diff = diff.slice(0, 400000) + '\n…[diff truncated]'; }
-  const out = await oneShot(ctx, 'Grok: writing commit message…',
-    apiMode() === 'chat'
-      ? 'Write a git commit message for the staged diff. Conventional style: a concise imperative subject line under 72 chars, blank line, then short bullet body if useful. Output only the message, no fences.'
-      : 'Write a git commit message for the staged diff. subject: conventional-commit style, imperative, under 72 chars. body: short bullet points only if they add information.',
-    diff, apiMode() === 'chat' ? undefined : COMMIT_FORMAT);
-  if (out) { repo.inputBox.value = renderCommitMessage(out); }
 }
 
 export async function fixDiagnostic(ctx: vscode.ExtensionContext, uri: vscode.Uri, range: vscode.Range, message: string) {
