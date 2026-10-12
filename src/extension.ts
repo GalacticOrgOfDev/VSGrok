@@ -102,6 +102,10 @@ export function activate(context: vscode.ExtensionContext) {
     const q = await vscode.window.showInputBox({ prompt: 'Agent task for Grok (it will ask before editing or running anything)', ignoreFocusOut: true });
     if (q?.trim()) { await chat.injectQuery(q.trim(), { agent: true }); }
   });
+  reg('vsgrok.runTask', async (goal?: unknown) => {
+    const q = typeof goal === 'string' ? goal : await vscode.window.showInputBox({ prompt: 'Task for Grok to run on its own (plan, edit, test, fix). Risky steps still ask in the chat.', ignoreFocusOut: true });
+    if (q?.trim()) { await chat.runTask(q.trim()); }
+  });
   reg('vsgrok.stop', () => chat.stop());
   reg('vsgrok.toggleInline', async () => {
     const c = cfg();

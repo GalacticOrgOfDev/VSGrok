@@ -7,7 +7,11 @@ import { runResponsesLoop, ConversationState } from './agent/responsesLoop';
 import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool, toResponsesTools } from './agent/tools';
 import { runToolLoop } from './agent/loop';
 import { proposeEdit, proposeRangeEdit } from './proposals';
-import { ApprovalBroker, setApprover } from './agent/approvals';
+import { ApprovalBroker, setApprover, setAutoPolicy, ApprovalRequest, runInTaskScope } from './agent/approvals';
+import { autoDecision, budgetExceeded, parseLevel, DEFAULT_COMMAND_ALLOWLIST } from './agent/autoApproveCore';
+import { TaskTracker, setTaskTracker } from './agent/taskTracker';
+import { sensitivePath } from './agent/planCore';
+import { checkWritable } from './security';
 import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
 import { checkReadable } from './security';
@@ -36,6 +40,18 @@ export const SYSTEM_PROMPT =
 const AGENT_PROMPT =
   ' Agent mode is on: you can also call propose_plan (preferred for changes to more than one file), propose_edit, run_tests and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
   'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.';
+
+const TASK_PROMPT =
+  'Update: background task mode. Work through the task on your own: (1) inspect the relevant files, (2) state a short plan as a checklist, ' +
+  '(3) make the changes (propose_plan for multi-file changes), (4) run_tests and get_problems, (5) fix failures and repeat until green or you are blocked. ' +
+  'Some approvals may be granted automatically; deletes, renames, unlisted commands and anything outside the workspace still wait for the user. ' +
+  'If a step is denied, adapt or explain. Do not ask the user questions mid-task unless you are blocked. ' +
+  'End with a summary: what changed (files), test status, and anything left to do.';
+
+interface TaskRun {
+  id: string; goal: string; tracker: TaskTracker; started: number; maxSteps: number;
+  steps: number; tokens: number; costUsd?: number; autoApproved: number; asked: number; outcome?: string;
+}
 
 const NO_AGENT_PROMPT =
   ' Agent mode is off: you cannot edit files or run commands. Show changes as code blocks with path=… so the user can click Apply, ' +
@@ -156,6 +172,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div id="image-tray" role="list" aria-label="Attached images" hidden></div>
 <div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button><button id="attach-image" class="h-btn icon" aria-label="Attach image" title="Attach image (or paste, or Shift+drag one in)">🖼</button>
 <textarea id="input" rows="1" placeholder="Ask Grok… (paste or drop images · Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
+<button id="task-toggle" class="h-btn task-toggle" type="button" aria-pressed="false" title="Run task: Grok plans, edits, tests and fixes on its own until done (auto-approve level: vsgrok.agent.autoApprove). Risky steps still ask.">▶ Task</button>
 <button id="send" class="send" aria-label="Send">➤</button></div>
 <dialog id="img-preview" aria-label="Image preview"><img id="img-preview-img" alt=""><div class="dlg-actions"><button id="img-preview-close" type="button" class="h-btn">Close</button></div></dialog>
 <div id="toasts" aria-live="polite"></div>
@@ -236,6 +253,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       } break;
       case 'pickImage': await this.pickImages(); break;
       case 'stop': this.stop(); break;
+      case 'runTask': if (typeof m.text === 'string') { await this.runTask(m.text); } break;
+      case 'undoTask': if (typeof m.id === 'string') { await this.undoTask(m.id); } break;
       case 'regenerate': if (this.lastUser && !this.busy) {
         if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev }; this.convMode = this.preTurn.mode; }
         while (this.history.length && this.history[this.history.length - 1].role !== 'user') { this.history.pop(); }
@@ -516,6 +535,84 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private task?: TaskRun;
+  /** Finished tasks that can still be undone (most recent 5). */
+  private taskTrackers = new Map<string, TaskTracker>();
+  private taskSeq = 0;
+
+  /** Background "Run task": plan → edit → test → fix loop with the auto-approve policy, a progress card, Stop, and Undo all. */
+  async runTask(goal: string): Promise<void> {
+    if (!goal.trim()) { return; }
+    await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
+    await Promise.race([this.waitReady(), new Promise(r => setTimeout(r, 10000))]);
+    if (this.busy) { this.post({ type: 'toast', msg: 'Grok is still answering — press Stop first.' }); return; }
+    if (apiMode() === 'chat') { this.post({ type: 'toast', msg: 'Run task needs the Responses API (set vsgrok.api to "responses").' }); return; }
+    const c = cfg();
+    const tracker = new TaskTracker();
+    const t: TaskRun = { id: `task${++this.taskSeq}-${Date.now().toString(36)}`, goal, tracker, started: Date.now(), maxSteps: clampNum(c.get('agent.task.maxSteps'), 1, 200, 40), steps: 0, tokens: 0, autoApproved: 0, asked: 0 };
+    this.task = t;
+    this.agentMode = true; this.pushSettings();
+    setTaskTracker(tracker);
+    setAutoPolicy(req => this.autoPolicy(req));
+    this.post({ type: 'taskStart', id: t.id, goal, maxSteps: t.maxSteps, level: this.autoSettings().level, budget: this.taskLimits() });
+    try { await this.send(goal); }
+    finally {
+      setAutoPolicy(undefined); setTaskTracker(undefined);
+      const files = await tracker.finish();
+      if (files.length) { this.taskTrackers.set(t.id, tracker); while (this.taskTrackers.size > 5) { this.taskTrackers.delete(this.taskTrackers.keys().next().value as string); } }
+      this.post({ type: 'taskEnd', id: t.id, outcome: t.outcome ?? 'done', files, steps: t.steps, tokens: t.tokens, costUsd: t.costUsd, autoApproved: t.autoApproved, asked: t.asked, ms: Date.now() - t.started });
+      this.task = undefined;
+    }
+  }
+
+  /** Level and allowlist come from user (global) settings only; a repo's workspace settings can't widen them. */
+  private autoSettings(): { level: ReturnType<typeof parseLevel>; allowlist: string[] } {
+    const c = cfg();
+    const lv = c.inspect<string>('agent.autoApprove');
+    const al = c.inspect<string[]>('agent.commandAllowlist');
+    const list = al?.globalValue ?? al?.defaultValue ?? DEFAULT_COMMAND_ALLOWLIST;
+    return { level: parseLevel(lv?.globalValue ?? lv?.defaultValue), allowlist: Array.isArray(list) ? list.filter(x => typeof x === 'string') : [] };
+  }
+
+  private taskLimits() {
+    const c = cfg();
+    return { maxTokens: clampNum(c.get('agent.task.maxTokens'), 0, 100_000_000, 2_000_000), maxCostUsd: clampNum(c.get('agent.task.maxCostUsd'), 0, 1000, 2) };
+  }
+
+  private async autoPolicy(req: ApprovalRequest): Promise<boolean> {
+    const t = this.task;
+    if (!t) { return false; }
+    const { level, allowlist } = this.autoSettings();
+    let writable = false;
+    if (req.kind === 'edit') {
+      try {
+        const { resolveInWorkspace } = await import('./agent/tools');
+        writable = (await checkWritable(resolveInWorkspace(req.path))).ok && !sensitivePath(req.path);
+      } catch { writable = false; }
+    }
+    const d = autoDecision(req, { level, allowlist, writable });
+    const what = req.kind === 'command' ? `\`${req.command}\`` : req.kind === 'edit' ? req.path : `plan (${req.files.length} files)`;
+    if (d.auto) { t.autoApproved++; } else { t.asked++; }
+    this.post({ type: 'taskLog', id: t.id, auto: d.auto, text: d.auto ? `Auto-approved ${what} (${d.why})` : `Asking you: ${what} (${d.why})` });
+    this.pushTask();
+    return d.auto;
+  }
+
+  private pushTask(label?: string) {
+    const t = this.task;
+    if (!t) { return; }
+    this.post({ type: 'taskProgress', id: t.id, steps: t.steps, maxSteps: t.maxSteps, tokens: t.tokens, costUsd: t.costUsd, autoApproved: t.autoApproved, asked: t.asked, label });
+  }
+
+  private async undoTask(id: string) {
+    const tr = this.taskTrackers.get(id);
+    if (!tr) { this.post({ type: 'taskUndone', id, ok: false, msg: 'Nothing to undo (too old or already undone).' }); return; }
+    this.taskTrackers.delete(id);
+    const r = await tr.undoAll();
+    this.post({ type: 'taskUndone', id, ok: !r.skipped.length, restored: r.restored, skipped: r.skipped,
+      msg: `Restored ${r.restored.length} file(s)` + (r.skipped.length ? `; skipped ${r.skipped.join(', ')}` : '') + '.' });
+  }
+
   private resetConv() { this.conv = { items: [] }; this.convMode = undefined; this.lastInputTokens = 0; this.preTurn = undefined; }
   private preTurn?: { len: number; prev?: string; mode?: string };
 
@@ -525,6 +622,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const agent = this.agentMode;
     const mode = agent ? 'agent' : 'ask';
     const c = cfg();
+    const task = this.task;
     if (images?.length && !this.noStore) {
       this.noStore = true;
       // M1: reasoning from store=true turns has no encrypted_content and can't be resent statelessly.
@@ -534,7 +632,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // (and all previous ones when this turn brings new images).
     if (this.noStore) { this.conv = { items: stripOldImages(this.conv.items, images?.length ? 0 : 1).items }; }
     const store = (c.get<boolean>('responses.store') ?? true) && !this.noStore;
-    const maxSteps = clampNum(c.get('agent.maxSteps'), 1, 50, 15);
+    const maxSteps = task ? task.maxSteps : clampNum(c.get('agent.maxSteps'), 1, 50, 15);
+    const limits = this.taskLimits();
     const cts = this.cts!;
     const signal = this.abort!.signal;
     const base = await requestOptions(this.ctx, { signal, convId: this.convId });
@@ -567,6 +666,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       newInput.push({ role: 'system', content: rules ? 'Update: the project instructions changed.' + rulesPrompt(rules) : 'Update: the project instruction file was removed; ignore earlier project instructions.' });
     }
     this.rulesHash = rules?.hash;
+    if (task) { newInput.push({ role: 'system', content: TASK_PROMPT }); }
     newInput.push({ role: 'user', content });
     this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode };
     this.convMode = mode;
@@ -604,20 +704,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
             return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
           }
-          return executeTool(name, args, cts.token).then(r => { if (name === 'propose_edit' && /^Applied/.test(r)) { this.editedThisTurn = true; } return r; });
+          const run = () => executeTool(name, args, cts.token);
+          return (task ? runInTaskScope(run) : run()).then(r => { if (name === 'propose_edit' && /^Applied/.test(r)) { this.editedThisTurn = true; } return r; });
         },
         onToolStart: (call, args) => {
           const t = `t${++tid}`; ids.set(call.call_id, t);
           this.post({ type: 'toolEvent', id: aid, toolId: t, state: 'running', label: toolLabel(call.name, args) });
+          if (task) { this.pushTask(toolLabel(call.name, args)); }
         },
+        budget: task ? (acc) => {
+          task.tokens = acc.inputTokens + acc.outputTokens;
+          task.costUsd = acc.costMissing >= task.steps && task.steps > 0 ? undefined : acc.costTicks / 1e10;
+          return budgetExceeded({ tokens: task.tokens, costUsd: task.costUsd }, limits);
+        } : undefined,
         onToolEnd: (call, args, out) => {
           const failed = /^(Error:|Unknown tool|Tool .* is not available)/.test(out);
           this.post({ type: 'toolEvent', id: aid, toolId: ids.get(call.call_id), state: failed ? 'error' : 'done', label: toolLabel(call.name, args, true), detail: out.length > 4000 ? out.slice(0, 4000) + '\n…' : out });
         },
-        onStepEnd: (_s, res) => { if (res.functionCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); } },
+        onStepEnd: (_s, res) => {
+          if (res.functionCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); }
+          if (task) {
+            task.steps++;
+            task.tokens += (res.usage?.input_tokens ?? 0) + (res.usage?.output_tokens ?? 0);
+            if (typeof res.usage?.cost_in_usd_ticks === 'number') { task.costUsd = (task.costUsd ?? 0) + res.usage.cost_in_usd_ticks / 1e10; }
+            this.pushTask();
+          }
+        },
       });
       this.lastInputTokens = r.lastInputTokens;
-      if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
+      if (task) {
+        task.tokens = r.inputTokens + r.outputTokens; task.costUsd = r.costMissing >= r.steps ? undefined : r.costTicks / 1e10;
+        task.outcome = r.stopReason ? 'budget' : r.hitStepCap ? 'steps' : 'done';
+        if (r.stopReason) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Stopped: ${r.stopReason} (vsgrok.agent.task.*)._` }); }
+      }
+      if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (${task ? 'vsgrok.agent.task.maxSteps' : 'vsgrok.agent.maxSteps'})._` }); }
       this.offerChecks();
       this.meter = addTurn(this.meter, { input: r.inputTokens, output: r.outputTokens, reasoning: r.reasoningTokens, cached: r.cachedTokens,
         costUsd: r.costMissing >= r.steps ? undefined : r.costTicks / 1e10, costMissing: r.costMissing });
@@ -632,6 +752,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       diag('chat.error', { kind: err.kind ?? 'generic', status: err.statusCode, attempts: err.attempts });
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
       else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic', attempts: err.attempts }); }
+      if (task) { task.outcome = err.kind === 'aborted' ? 'stopped' : 'error'; }
       // Roll back to the last consistent state so no function_call is left without its output.
       this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev };
       this.convMode = this.preTurn.mode;

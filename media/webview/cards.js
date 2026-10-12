@@ -101,5 +101,26 @@
   function imagesOnlyPrompt(n) { return n > 1 ? 'What is in these images?' : 'What is in this image?'; }
   function toastMs(text) { return 6000 + Math.ceil(String(text).length / 40) * 1000; }
 
-  return { IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, imagesOnlyPrompt, toastMs, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
+  // ---- background task card ----
+  function fmtTok(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+  function taskProgressText(p) {
+    const parts = ['Step ' + (p.steps | 0) + ' of ' + (p.maxSteps | 0), fmtTok(p.tokens) + ' tokens'];
+    if (typeof p.costUsd === 'number') { parts.push('$' + p.costUsd.toFixed(p.costUsd < 0.1 ? 3 : 2)); }
+    if (p.autoApproved) { parts.push(p.autoApproved + ' auto-approved'); }
+    if (p.asked) { parts.push(p.asked + ' asked'); }
+    return parts.join(' · ');
+  }
+  function taskEndHead(outcome, nFiles) {
+    const files = nFiles + ' file' + (nFiles === 1 ? '' : 's') + ' changed';
+    switch (outcome) {
+      case 'stopped': return '■ Task stopped · ' + files;
+      case 'budget': return '⚠ Task stopped at its budget · ' + files;
+      case 'steps': return '⚠ Task hit its step limit · ' + files;
+      case 'error': return '✕ Task failed · ' + files;
+      default: return '✓ Task finished · ' + files;
+    }
+  }
+  function levelLabel(l) { return l === 'editsAndCommands' ? 'Auto-approving workspace edits and allowlisted commands' : l === 'safeEdits' ? 'Auto-approving workspace edits' : 'Asking before every edit and command'; }
+
+  return { fmtTok, taskProgressText, taskEndHead, levelLabel, IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, imagesOnlyPrompt, toastMs, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
 });

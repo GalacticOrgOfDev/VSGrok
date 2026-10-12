@@ -413,7 +413,7 @@ suite('VSGrok in VS Code', () => {
     assert.strictEqual(c.request.repoControlled, true); assert.match(c.request.source, /package\.json/);
     await api.chat.testReceive({ type: 'approvalResponse', reqId: c.reqId, decision: 'deny' }); await p;
     const pj = vscode.extensions.all.find(e => e.packageJSON.name === 'vsgrok')!.packageJSON;
-    assert.deepStrictEqual(pj.capabilities.untrustedWorkspaces.restrictedConfigurations, ['vsgrok.testCommand']);
+    assert.deepStrictEqual(pj.capabilities.untrustedWorkspaces.restrictedConfigurations, ['vsgrok.testCommand', 'vsgrok.agent.autoApprove', 'vsgrok.agent.commandAllowlist']);
     assert.strictEqual(pj.contributes.configuration.properties['vsgrok.testCommand'].scope, 'machine-overridable');
   });
 
@@ -613,5 +613,90 @@ suite('VSGrok in VS Code', () => {
       assert.strictEqual(kb.key, 'ctrl+i'); assert.strictEqual(kb.mac, 'cmd+i'); assert.match(kb.when, /!inlineChatHasProvider/);
       assert.match(pkg.contributes.keybindings.find((k: { key: string }) => k.key === 'tab').when, /vsgrok\.inlineEditReady.*!suggestWidgetVisible.*!inlineSuggestionVisible/);
     });
+  });
+
+  // ---------- 0.10.0: background task ----------
+  const fcall = (i: number, name: string, args: unknown) => ({ type: 'function_call', id: `fc_t${i}`, call_id: `call_t${i}`, name, arguments: JSON.stringify(args), status: 'completed' });
+  const rreply = (xai: string, body: unknown) => fetch(xai + '/responsesReply', { method: 'POST', body: JSON.stringify(body) });
+
+  test('run task: auto-approves workspace creates and allowlisted commands, asks for deletes/other commands, progress + summary + Undo all', async () => {
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('agent.autoApprove', 'editsAndCommands', vscode.ConfigurationTarget.Global);
+    await c.update('agent.commandAllowlist', ['node --version'], vscode.ConfigurationTarget.Global);
+    try {
+      await withMock('mock-text', async (xai) => {
+        await api.chat.testReceive({ type: 'clearChat' }); await idle();
+        const root = vscode.workspace.workspaceFolders![0].uri;
+        await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'keep-me.txt'), Buffer.from('keep'));
+        await rreply(xai, { output: [fcall(1, 'propose_plan', { summary: 's', changes: [{ op: 'create', path: 'task-out.txt', content: 'hello' }, { op: 'modify', path: 'keep-me.txt', content: 'kept and changed' }] })] });
+        await rreply(xai, { output: [fcall(2, 'run_command', { command: 'node --version' })] });
+        await rreply(xai, { output: [fcall(3, 'run_command', { command: 'echo hi' })] });
+        await rreply(xai, { output: [fcall(4, 'propose_plan', { changes: [{ op: 'delete', path: 'keep-me.txt' }] })] });
+        await rreply(xai, { text: 'Done: created task-out.txt.' });
+        const a0 = posts('approvalRequest').length; const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
+        const p = api.chat.runTask('make task-out.txt');
+        // The two risky steps show cards; deny both.
+        const card1 = await until(() => posts('approvalRequest')[a0]);
+        assert.strictEqual(card1.request.kind, 'command'); assert.strictEqual(card1.request.command, 'echo hi');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: card1.reqId, decision: 'deny' });
+        const card2 = await until(() => posts('approvalRequest')[a0 + 1]);
+        assert.strictEqual(card2.request.kind, 'plan'); assert.strictEqual(card2.request.files[0].op, 'delete');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: card2.reqId, decision: 'deny' });
+        await p;
+        assert.strictEqual(posts('approvalRequest').length, a0 + 2, 'only the risky steps asked');
+        assert.strictEqual(Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root, 'task-out.txt'))).toString(), 'hello');
+        const start = posts('taskStart').at(-1); assert.strictEqual(start.level, 'editsAndCommands'); assert.strictEqual(start.maxSteps, 40);
+        const logs = posts('taskLog').filter((l: { id: string }) => l.id === start.id).map((l: { text: string }) => l.text);
+        assert.match(logs[0], /Auto-approved plan \(2 files\)/); assert.match(logs[1], /Auto-approved `node --version`/);
+        assert.match(logs[2], /Asking you: `echo hi` \(command not on the allowlist\)/); assert.match(logs[3], /deletes keep-me\.txt/);
+        assert.ok(posts('taskProgress').some((x: { id: string; label?: string }) => x.id === start.id && /Ran|Running/.test(x.label ?? '')));
+        const end = posts('taskEnd').at(-1);
+        assert.strictEqual(end.outcome, 'done'); assert.deepStrictEqual([...end.files].sort(), ['keep-me.txt', 'task-out.txt']);
+        assert.strictEqual(end.autoApproved, 2); assert.strictEqual(end.asked, 2);
+        const reqs = (await (await fetch(xai + '/requests')).json() as { input: { role?: string; content?: string }[] }[]).slice(r0);
+        assert.ok(reqs[0].input.some(x => x.role === 'system' && /background task mode/.test(String(x.content))));
+        const outs = JSON.stringify(reqs);
+        assert.match(outs, /exit code 0/); assert.match(outs, /User declined to run the command/);
+        // Undo all restores the modified file and removes the created one.
+        await api.chat.testReceive({ type: 'undoTask', id: end.id });
+        const u = posts('taskUndone').at(-1);
+        assert.strictEqual(u.ok, true, u.msg);
+        assert.strictEqual(Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root, 'keep-me.txt'))).toString(), 'keep');
+        await assert.rejects(Promise.resolve(vscode.workspace.fs.stat(vscode.Uri.joinPath(root, 'task-out.txt'))));
+        await api.chat.testReceive({ type: 'undoTask', id: end.id });
+        assert.strictEqual(posts('taskUndone').at(-1).ok, false);
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(root, 'keep-me.txt'));
+      });
+    } finally {
+      await c.update('agent.autoApprove', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('agent.commandAllowlist', undefined, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('run task: default level asks for every edit; token budget stops with a no-tools summary; workspace settings cannot enable auto-approve', async () => {
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('agent.task.maxTokens', 1500, vscode.ConfigurationTarget.Global);
+    await c.update('agent.autoApprove', 'editsAndCommands', vscode.ConfigurationTarget.Workspace);
+    try {
+      await withMock('mock-text', async (xai) => {
+        await api.chat.testReceive({ type: 'clearChat' }); await idle();
+        await rreply(xai, { output: [fcall(5, 'propose_edit', { path: 'budget.txt', content: 'x' })], usage: { input_tokens: 1000, output_tokens: 600 } });
+        await rreply(xai, { text: 'Summary: stopped at budget.' });
+        const a0 = posts('approvalRequest').length; const r0 = (await (await fetch(xai + '/requests')).json() as unknown[]).length;
+        const p = api.chat.runTask('budget test');
+        const card = await until(() => posts('approvalRequest')[a0]);
+        assert.strictEqual(card.request.kind, 'edit', 'workspace-level autoApprove is ignored');
+        await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'deny' });
+        await p;
+        assert.strictEqual(posts('taskStart').at(-1).level, 'none');
+        const end = posts('taskEnd').at(-1);
+        assert.strictEqual(end.outcome, 'budget'); assert.deepStrictEqual(end.files, []);
+        const reqs = (await (await fetch(xai + '/requests')).json() as { tools?: unknown[] }[]).slice(r0);
+        assert.strictEqual(reqs.length, 2); assert.ok(!reqs[1].tools || reqs[1].tools.length === 0);
+      });
+    } finally {
+      await c.update('agent.task.maxTokens', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('agent.autoApprove', undefined, vscode.ConfigurationTarget.Workspace);
+    }
   });
 });

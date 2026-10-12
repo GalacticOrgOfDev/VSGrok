@@ -25,10 +25,12 @@ export interface ResponsesLoopOptions {
   onToolStart?: (call: FunctionCall, args: unknown) => void;
   onToolEnd?: (call: FunctionCall, args: unknown, result: string) => void;
   onStepEnd?: (step: number, res: ResponsesResult) => void;
+  /** Checked after each tool round: a reason stops the loop like the step cap (one final no-tools summary call). */
+  budget?: (acc: ResponsesLoopResult) => string | undefined;
 }
 
 export interface ResponsesLoopResult {
-  steps: number; toolCalls: number; hitStepCap: boolean; finalText: string;
+  steps: number; toolCalls: number; hitStepCap: boolean; finalText: string; stopReason?: string;
   outputTokens: number; reasoningTokens: number; cachedTokens: number; lastInputTokens: number; costTicks: number; inputTokens: number; costMissing: number;
   citations: { url: string; title?: string }[];
 }
@@ -83,11 +85,13 @@ export async function runResponsesLoop(o: ResponsesLoopOptions): Promise<Respons
     }
     s.items.push(...outputs);
     pending = outputs;
-    if (step + 1 >= o.maxSteps) {
-      const note = { role: 'user', content: `[Step limit of ${o.maxSteps} tool rounds reached. Do not call tools. Summarise what you found and what remains.]` };
+    const over = o.budget?.(acc);
+    if (step + 1 >= o.maxSteps || over) {
+      const why = over ?? `Step limit of ${o.maxSteps} tool rounds reached`;
+      const note = { role: 'user', content: `[${why}. Do not call tools. Summarise what you did, what changed, and what remains.]` };
       s.items.push(note);
       const fin = await send([...outputs, note], []);
-      return { ...acc, steps: step + 2, hitStepCap: true, finalText: fin.content };
+      return { ...acc, steps: step + 2, hitStepCap: !over, stopReason: over, finalText: fin.content };
     }
   }
 }

@@ -282,3 +282,32 @@ test('CSP allows data: images only (no blob:, no remote)', () => {
   const csp = /Content-Security-Policy" content="([^"]+)"/.exec(src)![1];
   assert.match(csp, /img-src \$\{webview\.cspSource\} data:;/); assert.doesNotMatch(csp, /blob:|https:/);
 });
+
+test('task mode: toggle sends runTask; progress card updates, logs approvals, ends with files and Undo all; Stop', () => {
+  const { d, post, sent } = boot();
+  const btn = d.getElementById('task-toggle') as HTMLButtonElement;
+  btn.click(); assert.equal(btn.getAttribute('aria-pressed'), 'true');
+  const input = d.getElementById('input') as HTMLTextAreaElement;
+  assert.match(input.placeholder, /task/);
+  input.value = 'add a CLI flag'; (d.getElementById('send') as HTMLButtonElement).click();
+  assert.deepEqual({ ...sent.find(m => m.type === 'runTask') }, { type: 'runTask', text: 'add a CLI flag' });
+  assert.equal(btn.getAttribute('aria-pressed'), 'false');
+  post({ type: 'taskStart', id: 't1', goal: 'add a CLI flag', maxSteps: 40, level: 'safeEdits' });
+  const card = d.querySelector('.task-card') as HTMLElement;
+  assert.match(card.textContent!, /Auto-approving workspace edits\. Deletes, renames/);
+  post({ type: 'taskProgress', id: 't1', steps: 2, maxSteps: 40, tokens: 12345, costUsd: 0.0123, autoApproved: 1, asked: 0, label: 'Running the tests…' });
+  assert.equal(card.querySelector('.task-progress')!.textContent, 'Step 2 of 40 · 12k tokens · $0.012 · 1 auto-approved');
+  assert.equal(card.querySelector('.task-progress')!.getAttribute('role'), 'status');
+  assert.equal(card.querySelector('.task-current')!.textContent, '→ Running the tests…');
+  for (let i = 0; i < 10; i++) { post({ type: 'taskLog', id: 't1', auto: i % 2 === 0, text: 'x' + i }); }
+  assert.equal(card.querySelectorAll('.task-log li').length, 8);
+  assert.equal(card.querySelector('.task-log li.asked')!.textContent!.startsWith('? '), true);
+  post({ type: 'taskEnd', id: 't1', outcome: 'budget', files: ['a.ts', 'b.ts'], steps: 5, maxSteps: 40, tokens: 50000, autoApproved: 3, asked: 1, ms: 4200 });
+  assert.equal(card.querySelector('.approval-head')!.textContent, '⚠ Task stopped at its budget · 2 files changed');
+  assert.equal(card.querySelector('[data-action="stop"]'), null);
+  const undo = card.querySelector('[data-action="undo-all"]') as HTMLButtonElement;
+  assert.equal(undo.textContent, 'Undo all (2)');
+  undo.click(); assert.ok(sent.some(m => m.type === 'undoTask' && m.id === 't1'));
+  post({ type: 'taskUndone', id: 't1', ok: true, msg: 'Restored 2 file(s).' });
+  assert.equal(card.dataset.state, 'undone');
+});

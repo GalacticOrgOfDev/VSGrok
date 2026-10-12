@@ -1,5 +1,6 @@
 // Multi-file edit plans: one in-chat approval card, atomic WorkspaceEdit, one-click undo.
 import * as vscode from 'vscode';
+import { trackBefore } from './agent/taskTracker';
 import { requestDecision, ApprovalRequest } from './agent/approvals';
 import { validatePlan, selectedIndices, hashBytes, PlanChange, sensitivePath, decodeText } from './agent/planCore';
 import { lineDelta } from './agent/approvals';
@@ -150,6 +151,7 @@ async function applyPrepared(items: Prepared[], summary?: string): Promise<{ ok:
   // H2: verify right before applying (the card may have been open for minutes).
   const stale = await staleReasons(items);
   if (stale.length) { return { ok: false, msg: `Plan not applied: ${stale.join('; ')}. Nothing was changed; propose it again from the current files.` }; }
+  await trackBefore(...items.flatMap(p => [p.uri, p.newUri]));
   const ok = await vscode.workspace.applyEdit(edit);
   if (!ok) { return { ok: false, msg: 'Applying the plan failed; nothing was changed (the edit is atomic).' + trashHint(items.some(p => p.c.op === 'delete' || p.c.op === 'rename')) }; }
   for (const p of items) {

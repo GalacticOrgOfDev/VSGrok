@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -150,6 +150,11 @@
         "title": "Reject Inline Edit",
         "category": "VSGrok",
         "icon": "$(close)"
+      },
+      {
+        "command": "vsgrok.runTask",
+        "title": "Run Task in Background",
+        "category": "VSGrok"
       }
     ],
     "menus": {
@@ -501,6 +506,67 @@
           "type": "boolean",
           "default": true,
           "description": "Enable Grok inline edit (Ctrl+I / Cmd+I in the editor). Ctrl+I yields to another inline-chat provider (e.g. Copilot) when one is installed; rebind vsgrok.inlineEdit to use it then."
+        },
+        "vsgrok.agent.autoApprove": {
+          "type": "string",
+          "enum": [
+            "none",
+            "safeEdits",
+            "editsAndCommands"
+          ],
+          "default": "none",
+          "scope": "machine-overridable",
+          "enumDescriptions": [
+            "Ask before every edit and command (default).",
+            "Run task only: auto-approve creates/edits of workspace files (not deletes, renames, flagged files like package.json/CI/.vscode, or symlinks out of the workspace).",
+            "Run task only: also auto-approve commands that exactly match vsgrok.agent.commandAllowlist."
+          ],
+          "markdownDescription": "Auto-approval for **Run task** only (normal chat always asks). Read from your user settings only; workspace settings are ignored. Deletes, renames, non-allowlisted commands and files outside the workspace always ask in the chat."
+        },
+        "vsgrok.agent.commandAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "npm test",
+            "npm run test",
+            "npm run lint",
+            "npm run build",
+            "pnpm test",
+            "pnpm run test",
+            "pnpm lint",
+            "pnpm run lint",
+            "yarn test",
+            "yarn lint",
+            "pytest",
+            "python -m pytest",
+            "go test ./...",
+            "go vet ./...",
+            "cargo test",
+            "cargo check"
+          ],
+          "scope": "machine-overridable",
+          "markdownDescription": "Commands **Run task** may run without asking when `vsgrok.agent.autoApprove` is `editsAndCommands`. Exact match only (whitespace collapsed); anything with shell metacharacters (`; & | $ > <` …) always asks. User settings only."
+        },
+        "vsgrok.agent.task.maxSteps": {
+          "type": "number",
+          "default": 40,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Run task: maximum tool rounds before Grok must stop and summarise."
+        },
+        "vsgrok.agent.task.maxTokens": {
+          "type": "number",
+          "default": 2000000,
+          "minimum": 0,
+          "description": "Run task: stop after this many input+output tokens (0 = no limit)."
+        },
+        "vsgrok.agent.task.maxCostUsd": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "Run task: stop once the cost reported by xAI reaches this many US dollars (0 = no limit; ignored when xAI reports no cost)."
         }
       }
     },
@@ -566,7 +632,9 @@
       "supported": "limited",
       "description": "In Restricted Mode VSGrok does not run git, ignores the project's VSGrok.md / .vsgrok/rules.md, and still never reads .env or credential files. Agent edits and commands always need your approval.",
       "restrictedConfigurations": [
-        "vsgrok.testCommand"
+        "vsgrok.testCommand",
+        "vsgrok.agent.autoApprove",
+        "vsgrok.agent.commandAllowlist"
       ]
     }
   }

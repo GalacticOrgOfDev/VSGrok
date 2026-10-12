@@ -266,6 +266,11 @@
     const text = input.value.trim();
     const imgs = state.images.map((i) => i.dataUrl);
     if (!text && !imgs.length) { return; }
+    if (state.taskMode && !imgs.length) {
+      vscode.postMessage({ type: 'runTask', text });
+      input.value = ''; autoGrow(); setTaskMode(false);
+      return;
+    }
     const q = imgs.length ? { type: 'query', text: text || VSGrokCards.imagesOnlyPrompt(imgs.length), images: imgs, imageNames: state.images.map((i) => i.name) } : { type: 'query', text };
     // Kept until the extension echoes userMessage; restored if a vision note refuses the send.
     state.pending = { text: input.value, query: q };
@@ -327,6 +332,54 @@
     e.preventDefault();
     void addImages(files.map((f) => ({ file: f, name: f.name && !/^image\.\w+$/.test(f.name) ? f.name : '' , pasted: true })));
   });
+  // ---- background task mode ----
+  const taskBtn = $('task-toggle');
+  function setTaskMode(on) {
+    state.taskMode = !!on; taskBtn.setAttribute('aria-pressed', String(state.taskMode));
+    input.placeholder = state.taskMode ? 'Describe the task for Grok to run on its own… (Enter to start)' : input.dataset.ph || input.placeholder;
+  }
+  input.dataset.ph = input.placeholder;
+  taskBtn.addEventListener('click', () => { setTaskMode(!state.taskMode); input.focus(); });
+  const taskCards = new Map();
+  function taskCard(m) {
+    const wasNear = nearBottom();
+    const card = document.createElement('div'); card.className = 'approval-card task-card'; card.dataset.state = 'running';
+    card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Background task');
+    const head = document.createElement('div'); head.className = 'approval-head'; head.textContent = '▶ Task running'; card.appendChild(head);
+    const goal = document.createElement('div'); goal.className = 'task-goal'; goal.textContent = VSGrokCards.firstLine(m.goal, 160); card.appendChild(goal);
+    const lvl = document.createElement('div'); lvl.className = 'approval-meta'; lvl.textContent = VSGrokCards.levelLabel(m.level) + '. Deletes, renames, other commands and files outside the workspace always ask.'; card.appendChild(lvl);
+    const prog = document.createElement('div'); prog.className = 'task-progress'; prog.setAttribute('role', 'status');
+    prog.textContent = VSGrokCards.taskProgressText({ steps: 0, maxSteps: m.maxSteps, tokens: 0 }); card.appendChild(prog);
+    const cur = document.createElement('div'); cur.className = 'task-current'; card.appendChild(cur);
+    const log = document.createElement('ul'); log.className = 'task-log'; log.setAttribute('aria-label', 'Approvals in this task'); card.appendChild(log);
+    const files = document.createElement('ul'); files.className = 'plan-files'; files.hidden = true; card.appendChild(files);
+    const actions = document.createElement('div'); actions.className = 'approval-actions';
+    const stopB = document.createElement('button'); stopB.className = 'approval-btn deny'; stopB.textContent = 'Stop task'; stopB.dataset.action = 'stop';
+    stopB.addEventListener('click', () => { stopB.disabled = true; stop(); });
+    actions.appendChild(stopB); card.appendChild(actions);
+    const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
+    messagesEl.appendChild(card); stick(wasNear);
+    taskCards.set(String(m.id), card);
+    announce.textContent = 'Task started';
+  }
+  function taskEnd(m) {
+    const card = taskCards.get(String(m.id)); if (!card) { return; }
+    card.dataset.state = m.outcome === 'done' ? 'approved' : m.outcome === 'error' ? 'denied' : 'stopped';
+    const files = (m.files || []).map(String);
+    card.querySelector('.approval-head').textContent = VSGrokCards.taskEndHead(String(m.outcome), files.length);
+    card.querySelector('.task-current').textContent = '';
+    card.querySelector('.task-progress').textContent = VSGrokCards.taskProgressText(m) + ' · ' + Math.round((m.ms || 0) / 1000) + ' s';
+    const ul = card.querySelector('.plan-files'); ul.innerHTML = '';
+    for (const f of files.slice(0, 100)) { const li = document.createElement('li'); li.textContent = f; ul.appendChild(li); }
+    ul.hidden = !files.length;
+    const actions = card.querySelector('.approval-actions'); actions.innerHTML = '';
+    if (files.length) {
+      const u = document.createElement('button'); u.className = 'approval-btn deny'; u.textContent = 'Undo all (' + files.length + ')'; u.dataset.action = 'undo-all';
+      u.addEventListener('click', () => { u.disabled = true; card.querySelector('.approval-status').textContent = 'Undoing…'; vscode.postMessage({ type: 'undoTask', id: String(m.id) }); });
+      actions.appendChild(u);
+    }
+    announce.textContent = card.querySelector('.approval-head').textContent;
+  }
   $('attach-image').addEventListener('click', () => vscode.postMessage({ type: 'pickImage' }));
   function toggleCostPop(open) {
     const pop = $('cost-pop'), btnEl = $('cost-meter');
@@ -745,7 +798,28 @@
       }
       case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }
       case 'toast': toast(m.msg); break;
-      case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
+      case 'taskStart': taskCard(m); break;
+      case 'taskProgress': {
+        const card = taskCards.get(String(m.id)); if (!card) { break; }
+        card.querySelector('.task-progress').textContent = VSGrokCards.taskProgressText(m);
+        if (m.label) { card.querySelector('.task-current').textContent = '→ ' + String(m.label); }
+        break;
+      }
+      case 'taskLog': {
+        const card = taskCards.get(String(m.id)); if (!card) { break; }
+        const li = document.createElement('li'); li.className = m.auto ? 'auto' : 'asked'; li.textContent = (m.auto ? '✓ ' : '? ') + String(m.text);
+        const log = card.querySelector('.task-log'); log.appendChild(li); while (log.children.length > 8) { log.firstChild.remove(); }
+        break;
+      }
+      case 'taskEnd': taskEnd(m); break;
+      case 'taskUndone': {
+        const card = taskCards.get(String(m.id)); if (!card) { break; }
+        card.querySelector('.approval-status').textContent = (m.ok ? '↶ ' : '⚠ ') + String(m.msg || '');
+        if (m.ok) { card.dataset.state = 'undone'; }
+        announce.textContent = String(m.msg || '');
+        break;
+      }
+      case 'chatCleared': taskCards.clear(); approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }
   });
 

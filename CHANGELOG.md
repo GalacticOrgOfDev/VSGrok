@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.0 — 2026-10-12
+**Run task (background agent)**
+- **▶ Task** next to Send, or *VSGrok: Run Task in Background*, runs a goal as a task. Grok inspects the code, states a short plan, edits, runs `run_tests` and `get_problems`, and fixes failures until green or blocked, then summarises.
+- **Task card** in the chat:
+  - progress (step N of max, tokens, cost when xAI reports it, auto-approved and asked counts), the current step, and the last 8 approval decisions with reasons;
+  - **Stop task**;
+  - at the end, the outcome (finished / stopped / budget / step limit / failed) and the changed files, with **Undo all**.
+- **Undo all** restores every file the task created, modified or deleted to its pre-task bytes. It skips (and names) any file changed after the task ended.
+- **`vsgrok.agent.autoApprove`** applies to Run task only (normal chat always asks):
+  - `none` (default) asks before everything;
+  - `safeEdits` auto-approves creates and edits of writable workspace files;
+  - `editsAndCommands` also auto-approves commands that exactly match `vsgrok.agent.commandAllowlist`.
+- **Always ask:** deletes, renames, refused rows, flagged files (package.json, CI workflows, `.vscode` tasks/settings, Grok's rules), symlinks out of the workspace, commands that aren't allowlisted, and any command with shell metacharacters.
+- Auto-approval applies only to the task's own tool calls; an *Apply* or *Fix* click during a task still shows a card.
+- The level and the allowlist are read from **user settings only**; workspace values are ignored. Both are also restricted in untrusted workspaces.
+- **Limits:**
+  - `vsgrok.agent.task.maxSteps` (40);
+  - `vsgrok.agent.task.maxTokens` (2,000,000);
+  - `vsgrok.agent.task.maxCostUsd` ($2, applied only when xAI reports cost).
+  - Hitting a limit stops the loop with one final summary request that has no tools.
+- Run task uses the Responses API. With `vsgrok.api: "chat"` it shows a note instead.
+
 ## 0.9.0 — 2026-10-12
 **Inline edit**
 - Select code, or put the cursor on a line, and press **Ctrl+I** (**Cmd+I** on macOS). An inline input opens at the cursor (VS Code's comment widget). Type an instruction and press Enter.

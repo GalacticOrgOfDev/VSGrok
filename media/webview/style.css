@@ -305,3 +305,14 @@ button.cost-meter:focus-visible{outline:2px solid var(--vscode-focusBorder)}
 .h-btn.link{background:none;border:none;color:var(--vscode-textLink-foreground);text-decoration:underline;cursor:pointer}
 #toasts{position:fixed;left:10px;right:10px;bottom:56px;display:flex;flex-direction:column;gap:4px;z-index:5;pointer-events:none}
 #toasts .toast{position:static;pointer-events:auto;cursor:pointer}
+/* background task */
+.task-toggle[aria-pressed=true]{background:var(--vscode-button-background);color:var(--vscode-button-foreground);outline:1px solid var(--vscode-focusBorder)}
+.task-card{border-left:3px solid var(--vscode-progressBar-background,#0e70c0)}
+.task-card[data-state=stopped]{border-left-color:var(--vscode-editorWarning-foreground,#cca700)}
+.task-goal{font-weight:600;margin:2px 0 4px;overflow-wrap:anywhere}
+.task-progress{font-variant-numeric:tabular-nums;color:var(--vscode-descriptionForeground);margin:4px 0}
+.task-current{font-size:.92em;overflow-wrap:anywhere;min-height:1.2em}
+.task-log{list-style:none;margin:4px 0;padding:0;font-size:.9em;max-height:9em;overflow:auto}
+.task-log li{overflow-wrap:anywhere;padding:1px 0}
+.task-log li.asked{color:var(--vscode-editorWarning-foreground,#cca700)}
+@media (forced-colors:active){.task-toggle[aria-pressed=true]{outline:2px solid Highlight}.task-card{border-left-color:CanvasText}}

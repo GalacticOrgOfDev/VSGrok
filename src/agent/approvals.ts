@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 // In-chat approval cards. Every permission request (run_command, propose_edit, Apply/Fix diffs) is
 // posted to the chat webview with a request id and resolved only by the user's Approve/Deny click there.
 // Closing the panel, stopping, clearing the chat or cancelling the request resolves as deny.
@@ -85,8 +86,23 @@ export function requestApproval(req: ApprovalRequest, opts?: ApprovalOptions): P
   return requestDecision(req, opts).then(d => d.ok);
 }
 export function requestDecision(req: ApprovalRequest, opts?: ApprovalOptions): Promise<ApprovalDecision> {
-  return approver ? approver(req, opts) : Promise.resolve({ ok: false });
+  if (!approver) { return Promise.resolve({ ok: false }); }
+  const a = approver;
+  if (!autoPolicy || !taskScope.getStore()) { return a(req, opts); }
+  return autoPolicy(req).then(auto => {
+    if (!auto || opts?.signal?.aborted) { return a(req, opts); }
+    // Auto-approved during a background task: every selectable plan row is taken.
+    return { ok: true, selected: req.kind === 'plan' ? req.files.map((f, i) => f.refused ? -1 : i).filter(i => i >= 0) : undefined };
+  });
 }
+
+/** Background task policy: resolves true to auto-approve (the policy logs it); false falls through to the card. */
+export type AutoPolicy = (req: ApprovalRequest) => Promise<boolean>;
+let autoPolicy: AutoPolicy | undefined;
+// Only approvals requested from inside a task's own tool calls may be auto-approved (not Apply/Fix clicks meanwhile).
+const taskScope = new AsyncLocalStorage<true>();
+export function runInTaskScope<T>(fn: () => Promise<T>): Promise<T> { return taskScope.run(true, fn); }
+export function setAutoPolicy(p: AutoPolicy | undefined): void { autoPolicy = p; }
 
 /** Rough added/removed line counts for the card summary (multiset line diff). */
 export function lineDelta(oldText: string, newText: string): { added: number; removed: number } {

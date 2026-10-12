@@ -22,6 +22,8 @@ async function main() {
   const xaiRequests: unknown[] = [];
   const chatRequests: unknown[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const responsesReplies: { output?: any[]; text?: string; usage?: any }[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chatReplies: { text: string; toolCalls?: any[] }[] = [];
   function mockXai(req: http.IncomingMessage, res: http.ServerResponse) {
     const url = req.url!.replace(/^\/xai\/v1/, '');
@@ -30,6 +32,10 @@ async function main() {
     if (req.url === '/xai/chatRequests') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(chatRequests)); return; }
     if (req.url === '/xai/chatReply' && req.method === 'POST') {
       let b = ''; req.on('data', d => (b += d)); req.on('end', () => { try { chatReplies.push(JSON.parse(b)); } catch { /* ignore */ } res.writeHead(204); res.end(); });
+      return;
+    }
+    if (req.url === '/xai/responsesReply' && req.method === 'POST') {
+      let b = ''; req.on('data', d => (b += d)); req.on('end', () => { try { responsesReplies.push(JSON.parse(b)); } catch { /* ignore */ } res.writeHead(204); res.end(); });
       return;
     }
     if (url === '/chat/completions' && req.method === 'POST') {
@@ -57,9 +63,18 @@ async function main() {
           res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'reasoning item without encrypted_content cannot be resolved' } })); return;
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        const msg = { type: 'message', id: `msg_${n}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'A red square.', annotations: [] }] };
+        const q = responsesReplies.shift();
+        const txt = q?.text ?? (q?.output ? '' : 'A red square.');
+        const msg = { type: 'message', id: `msg_${n}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: txt, annotations: [] }] };
+        if (q?.output) {
+          const out = [...q.output, ...(txt ? [msg] : [])];
+          const u = q.usage ?? { input_tokens: 1000, output_tokens: 50, cost_in_usd_ticks: 10_000_000 };
+          const e = { type: 'response.completed', response: { id: `resp_${n}`, status: 'completed', output: out, usage: u } };
+          res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`); res.end();
+          return;
+        }
         const ev = [
-          { type: 'response.output_text.delta', item_id: msg.id, output_index: 0, content_index: 0, delta: 'A red square.' },
+          { type: 'response.output_text.delta', item_id: msg.id, output_index: 0, content_index: 0, delta: txt },
           { type: 'response.completed', response: { id: `resp_${n}`, status: 'completed', output: parsed.store === false ? [msg] : [{ type: 'reasoning', id: `rs_${n}`, summary: [] }, msg], usage: { input_tokens: 1000 * n, output_tokens: 50, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 10 }, cost_in_usd_ticks: 123_000_000 } } },
         ];
         for (const e of ev) { res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`); }

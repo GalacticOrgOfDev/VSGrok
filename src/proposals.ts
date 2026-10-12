@@ -1,5 +1,6 @@
 // Proposed edits: approved or denied on an in-chat card (View diff opens vscode.diff on a vsgrok-proposed: doc); applied only after Approve.
 import * as vscode from 'vscode';
+import { trackBefore } from './agent/taskTracker';
 import { requestApproval, lineDelta } from './agent/approvals';
 
 export const SCHEME = 'vsgrok-proposed';
@@ -53,6 +54,7 @@ export async function proposeEdit(target: vscode.Uri, newContent: string, reason
     const doc = await vscode.workspace.openTextDocument(target);
     edit.replace(target, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), newContent);
   }
+  await trackBefore(target);
   const applied = await vscode.workspace.applyEdit(edit);
   if (applied && exists) { await (await vscode.workspace.openTextDocument(target)).save(); }
   return applied ? { ok: true, msg: `Applied edit to ${rel}` } : { ok: false, msg: `Failed to apply edit to ${rel}` };
