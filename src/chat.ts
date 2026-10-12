@@ -12,6 +12,8 @@ import { autoDecision, budgetExceeded, parseLevel, DEFAULT_COMMAND_ALLOWLIST } f
 import { TaskTracker, setTaskTracker } from './agent/taskTracker';
 import { sensitivePath } from './agent/planCore';
 import { checkWritable } from './security';
+import { ChatStore, newChatId } from './chatStore';
+import { ChatRecord, TranscriptMsg, titleFrom, toMarkdown, slug, transcriptToItems } from './historyCore';
 import { setErrorSink } from './errors';
 import { diag } from './diagnostics';
 import { checkReadable } from './security';
@@ -52,6 +54,16 @@ interface TaskRun {
   id: string; goal: string; tracker: TaskTracker; started: number; maxSteps: number;
   steps: number; tokens: number; costUsd?: number; autoApproved: number; asked: number; outcome?: string;
 }
+
+/** Per-tab chat state that is swapped when switching tabs or reopening a saved chat. */
+interface ChatSession {
+  id: string; title: string; titled: boolean; created: number;
+  transcript: TranscriptMsg[];
+  history: ChatMessage[]; conv: ConversationState; convMode?: string; lastInputTokens: number;
+  lastUser?: { text: string; images?: string[] }; meter: MeterState; noStore: boolean; convId: string; rulesHash?: string;
+  preTurn?: { len: number; prev?: string; mode?: string };
+}
+export const MAX_TABS = 8;
 
 const NO_AGENT_PROMPT =
   ' Agent mode is off: you cannot edit files or run commands. Show changes as code blocks with path=… so the user can click Apply, ' +
@@ -101,6 +113,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private rulesHash?: string;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
+    this.store = new ChatStore(ctx.globalStorageUri);
     this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? true;
     ctx.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.pushEditorState()),
@@ -153,6 +166,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
 <button id="cost-meter" type="button" class="cost-meter" hidden aria-describedby="cost-detail" aria-expanded="false" aria-controls="cost-pop"></button><span id="cost-detail" class="sr-only"></span>
 <button id="rules-chip" type="button" class="rules-chip" hidden aria-label="Project rules"></button>
+<button id="history-btn" type="button" class="h-btn icon" aria-label="Chat history" title="Chat history: search, reopen, rename, delete, export" aria-controls="history-panel" aria-expanded="false">🕘</button>
 <button id="settings-btn" type="button" class="h-btn icon" aria-label="Settings" aria-controls="settings-panel" aria-expanded="false">⚙</button>
 <button id="clear-btn" type="button" class="h-btn" aria-label="New chat">New</button></div></header>
 <section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
@@ -166,6 +180,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div class="slider-row"><label for="maxTokens">Max tokens</label><input type="range" id="maxTokens" min="256" max="32768" step="256"><span class="val" id="maxTokens-val"></span></div>
 <div class="slider-row cost-row" id="cost-row" hidden><span class="lbl">This chat</span><span id="cost-row-val"></span><button id="cost-row-details" type="button" class="h-btn link">details</button></div>
 <div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button></div></div>
+<div id="history-panel" role="region" aria-label="Chat history" hidden><div class="hist-top"><input id="history-search" type="search" placeholder="Search chats…" aria-label="Search chats"><button id="history-export" type="button" class="h-btn" title="Export the current chat to Markdown">Export .md</button></div><ul id="history-list" aria-label="Saved chats"></ul></div>
+<div id="tabs" role="tablist" aria-label="Open chats"></div>
 <div id="messages-wrap"><div id="messages" role="log" aria-live="polite"></div><button id="new-output" class="pill" hidden>↓ New output</button><div id="sr-announce" class="sr-only" aria-live="polite"></div></div>
 <div id="cost-pop" class="cost-pop" role="dialog" aria-label="Chat usage" hidden></div>
 <div id="chips"></div>
@@ -224,7 +240,193 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   get isReady() { return this.ready; }
 
   private post(msg: unknown) {
+    this.recordTranscript(msg);
     if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) { this.testPosts.push(msg); } void this.view?.webview.postMessage(msg); }
+
+  // ---------- chat history + tabs ----------
+  readonly store: ChatStore;
+  private chatId = newChatId();
+  private chatTitle = 'New chat';
+  private chatTitled = false;
+  private chatCreated = Date.now();
+  private transcript: TranscriptMsg[] = [];
+  private turnBuf?: string;
+  /** Open tabs (the active one's live state is in the provider fields; others are parked here). */
+  private tabs: ChatSession[] = [];
+  private saveTimer?: NodeJS.Timeout;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private recordTranscript(msg: any) {
+    switch (msg?.type) {
+      case 'userMessage':
+        this.transcript.push({ role: 'user', text: String(msg.text ?? ''), ts: Date.now(), ...(msg.imageNames?.length ? { imageNames: [...msg.imageNames] } : {}) });
+        if (!this.chatTitled && this.transcript.filter(m => m.role === 'user').length === 1) { this.chatTitle = titleFrom(String(msg.text ?? '')); this.pushTabs(); }
+        break;
+      case 'streamStart': this.turnBuf = ''; break;
+      case 'streamChunk': if (this.turnBuf !== undefined) { this.turnBuf += String(msg.delta ?? ''); } break;
+      case 'streamDone': case 'streamStopped': case 'streamError':
+        if (this.turnBuf !== undefined) {
+          const state = msg.type === 'streamDone' ? 'done' : msg.type === 'streamStopped' ? 'stopped' : 'error';
+          this.transcript.push({ role: 'assistant', text: this.turnBuf, ts: Date.now(), state });
+          this.turnBuf = undefined;
+          this.scheduleSave();
+        }
+        break;
+    }
+  }
+
+  private scheduleSave() {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); }
+    this.saveTimer = setTimeout(() => { this.saveTimer = undefined; void this.saveNow(); }, 250);
+  }
+
+  /** Persist the active chat (no-op when empty). */
+  dispose() { void this.saveNow(); }
+
+  async saveNow(): Promise<void> {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; }
+    if (!this.transcript.length || !cfg().get<boolean>('history.enabled', true)) { return; }
+    const rec: ChatRecord = {
+      v: 1, id: this.chatId, title: this.chatTitle, titled: this.chatTitled || undefined, created: this.chatCreated, updated: Date.now(),
+      model: cfg().get<string>('model') || DEFAULT_MODEL, messages: this.transcript,
+      conv: apiMode() === 'responses' ? { items: this.conv.items, previousResponseId: this.conv.previousResponseId } : undefined,
+      noStore: this.noStore || undefined, convId: this.convId,
+    };
+    try { await this.store.save(rec); } catch (e) { diag('history.saveError', { msg: (e as Error).message }); }
+  }
+
+  private snapshot(): ChatSession {
+    return { id: this.chatId, title: this.chatTitle, titled: this.chatTitled, created: this.chatCreated, transcript: this.transcript,
+      history: this.history, conv: this.conv, convMode: this.convMode, lastInputTokens: this.lastInputTokens, lastUser: this.lastUser,
+      meter: this.meter, noStore: this.noStore, convId: this.convId, rulesHash: this.rulesHash, preTurn: this.preTurn };
+  }
+  private restore(x: ChatSession) {
+    this.chatId = x.id; this.chatTitle = x.title; this.chatTitled = x.titled; this.chatCreated = x.created; this.transcript = x.transcript;
+    this.history = x.history; this.conv = x.conv; this.convMode = x.convMode; this.lastInputTokens = x.lastInputTokens; this.lastUser = x.lastUser;
+    this.meter = x.meter; this.noStore = x.noStore; this.convId = x.convId; this.rulesHash = x.rulesHash; this.preTurn = x.preTurn;
+  }
+  private freshSession(): ChatSession {
+    return { id: newChatId(), title: 'New chat', titled: false, created: Date.now(), transcript: [], history: [], conv: { items: [] }, lastInputTokens: 0, meter: emptyMeter(), noStore: false, convId: newConvId() };
+  }
+  /** Session from a saved record. Resumes server-side (previous_response_id) when stored; otherwise from local items or the transcript. */
+  private sessionFrom(r: ChatRecord): ChatSession {
+    const items = r.conv?.items?.length ? r.conv.items : transcriptToItems(r.messages);
+    const prev = r.conv?.items?.length && !r.noStore ? r.conv.previousResponseId : undefined;
+    const history: ChatMessage[] = transcriptToItems(r.messages).map(m => ({ role: m.role, content: m.content }));
+    return { id: r.id, title: r.title, titled: !!r.titled, created: r.created, transcript: r.messages.map(m => ({ ...m })), history,
+      conv: { items, previousResponseId: prev }, convMode: r.conv?.items?.length ? undefined : 'restored', lastInputTokens: 0, meter: emptyMeter(),
+      noStore: !!r.noStore, convId: r.convId && /^[\w-]{8,64}$/.test(r.convId) ? r.convId : newConvId() };
+  }
+
+  private busyGuard(): boolean {
+    if (this.busy) { this.post({ type: 'toast', msg: 'Wait for Grok to finish (or press Stop) before switching chats.' }); return true; }
+    return false;
+  }
+
+  private ensureTabs() { if (!this.tabs.length) { this.tabs = [this.snapshot()]; } }
+  private activeIndex() { this.ensureTabs(); return Math.max(0, this.tabs.findIndex(t => t.id === this.chatId)); }
+
+  private pushTabs() {
+    this.ensureTabs();
+    const i = this.activeIndex(); this.tabs[i] = this.snapshot();
+    this.post({ type: 'tabs', active: this.chatId, tabs: this.tabs.map(t => ({ id: t.id, title: t.id === this.chatId ? this.chatTitle : t.title })) });
+  }
+
+  private showTranscript() {
+    this.approvals.cancelAll('cancelled');
+    this.post({ type: 'transcript', messages: this.transcript.map(m => ({ role: m.role, text: m.text, imageNames: m.imageNames, state: m.state })) });
+    this.pushMeter();
+  }
+
+  async activate(x: ChatSession) {
+    await this.saveNow();
+    this.ensureTabs();
+    this.tabs[this.activeIndex()] = this.snapshot();
+    this.restore(x);
+    if (!this.tabs.some(t => t.id === x.id)) {
+      this.tabs.push(x);
+      while (this.tabs.length > MAX_TABS) { const drop = this.tabs.findIndex(t => t.id !== x.id); this.tabs.splice(drop, 1); }
+    }
+    this.showTranscript();
+    this.pushTabs();
+  }
+
+  openHistoryPanel() { this.post({ type: 'openHistory' }); }
+
+  async newTab() { if (this.busyGuard()) { return; } await this.activate(this.freshSession()); }
+
+  async switchTab(id: string) {
+    if (id === this.chatId || this.busyGuard()) { return; }
+    const t = this.tabs.find(x => x.id === id);
+    if (t) { await this.activate(t); }
+  }
+
+  async closeTab(id: string) {
+    if (this.busyGuard()) { return; }
+    this.ensureTabs();
+    if (id !== this.chatId) { this.tabs = this.tabs.filter(t => t.id !== id); this.pushTabs(); return; }
+    await this.saveNow();
+    const i = this.activeIndex();
+    this.tabs.splice(i, 1);
+    const next = this.tabs[Math.min(i, this.tabs.length - 1)] ?? this.freshSession();
+    if (!this.tabs.length) { this.tabs.push(next); }
+    this.restore(next);
+    this.showTranscript(); this.pushTabs();
+  }
+
+  async openChat(id: string) {
+    if (this.busyGuard()) { return; }
+    const open = this.tabs.find(t => t.id === id);
+    if (open) { await this.switchTab(id); return; }
+    const r = await this.store.load(id);
+    if (!r) { this.post({ type: 'toast', msg: 'That chat could not be loaded.' }); return; }
+    // Reuse an empty active tab instead of adding a new one.
+    if (!this.transcript.length) { this.ensureTabs(); this.tabs.splice(this.activeIndex(), 1); this.restore(this.freshSession()); }
+    await this.activate(this.sessionFrom(r));
+  }
+
+  async pushHistory(query = '') {
+    const items = (await this.store.list(query)).slice(0, 100).map(e => ({ id: e.id, title: e.title, updated: e.updated, count: e.count, preview: e.preview, open: this.tabs.some(t => t.id === e.id) }));
+    this.post({ type: 'historyItems', query, items });
+  }
+
+  async renameChat(id: string, title?: string) {
+    const cur = id === this.chatId ? this.chatTitle : this.tabs.find(t => t.id === id)?.title ?? (await this.store.load(id))?.title ?? '';
+    const t = title ?? await vscode.window.showInputBox({ prompt: 'Rename chat', value: cur, validateInput: v => v.trim() ? undefined : 'Enter a name' });
+    if (!t?.trim()) { return; }
+    const name = t.trim().slice(0, 120);
+    if (id === this.chatId) { this.chatTitle = name; this.chatTitled = true; await this.saveNow(); }
+    const tab = this.tabs.find(x => x.id === id); if (tab) { tab.title = name; tab.titled = true; }
+    await this.store.rename(id, name);
+    this.pushTabs(); await this.pushHistory();
+  }
+
+  async deleteChat(id: string) {
+    await this.store.delete(id);
+    if (id === this.chatId) { this.transcript = []; this.chatId = newChatId(); this.chatTitle = 'New chat'; this.chatTitled = false; this.chatCreated = Date.now(); }
+    this.tabs = this.tabs.filter(t => t.id !== id || t.id === this.chatId);
+    this.pushTabs(); await this.pushHistory();
+  }
+
+  /** Export to Markdown. `target` skips the save dialog (tests); default name is the chat title. */
+  async exportChat(id?: string, target?: vscode.Uri): Promise<vscode.Uri | undefined> {
+    let rec: ChatRecord | undefined;
+    if (!id || id === this.chatId) {
+      if (!this.transcript.length) { this.post({ type: 'toast', msg: 'Nothing to export yet.' }); return; }
+      rec = { v: 1, id: this.chatId, title: this.chatTitle, created: this.chatCreated, updated: Date.now(), model: cfg().get<string>('model') || DEFAULT_MODEL, messages: this.transcript };
+    } else {
+      const tab = this.tabs.find(t => t.id === id);
+      rec = tab ? { v: 1, id: tab.id, title: tab.title, created: tab.created, updated: Date.now(), messages: tab.transcript } : await this.store.load(id);
+    }
+    if (!rec) { return; }
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const uri = target ?? await vscode.window.showSaveDialog({ defaultUri: root ? vscode.Uri.joinPath(root, `${slug(rec.title)}.md`) : undefined, filters: { Markdown: ['md'] }, saveLabel: 'Export chat' });
+    if (!uri) { return; }
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(toMarkdown(rec), 'utf8'));
+    if (!target) { await vscode.window.showTextDocument(uri, { preview: true }); }
+    this.post({ type: 'toast', msg: `Exported to ${vscode.workspace.asRelativePath(uri)}` });
+    return uri;
+  }
 
   private waitReady(): Promise<void> {
     if (this.ready) { return Promise.resolve(); }
@@ -239,7 +441,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'ready': {
         this.ready = true;
         this.approvals.cancelAll('panel reloaded');
-        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); this.pushProblems(); void this.pushKeyState(); void this.pushModels();
+        this.pushSettings(); this.pushEditorState(); this.pushContexts(); this.pushRules(); this.pushProblems(); void this.pushKeyState(); void this.pushModels(); this.pushTabs();
+        if (this.transcript.length) { this.showTranscript(); }
         this.readyWaiters.splice(0).forEach(r => r());
         this.onViewReady?.();
         break;
@@ -259,9 +462,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev }; this.convMode = this.preTurn.mode; }
         while (this.history.length && this.history[this.history.length - 1].role !== 'user') { this.history.pop(); }
         this.history.pop();
+        while (this.transcript.length && this.transcript[this.transcript.length - 1].role !== 'user') { this.transcript.pop(); }
+        this.transcript.pop();
         await this.send(this.lastUser.text, this.lastUser.images);
       } break;
-      case 'clearChat': this.stop(); this.history = []; this.resetConv(); this.meter = emptyMeter(); this.noStore = false; this.pushMeter(); this.convId = newConvId(); this.post({ type: 'chatCleared' }); break;
+      case 'clearChat': {
+        this.stop(); await this.saveNow();
+        const old = this.chatId;
+        this.history = []; this.resetConv(); this.meter = emptyMeter(); this.noStore = false; this.pushMeter(); this.convId = newConvId();
+        this.transcript = []; this.chatId = newChatId(); this.chatTitle = 'New chat'; this.chatTitled = false; this.chatCreated = Date.now();
+        this.ensureTabs(); const ti = this.tabs.findIndex(t => t.id === old); if (ti >= 0) { this.tabs[ti] = this.snapshot(); }
+        this.post({ type: 'chatCleared' }); this.pushTabs();
+        break;
+      }
+      case 'newTab': await this.newTab(); break;
+      case 'switchTab': if (typeof m.id === 'string') { await this.switchTab(m.id); } break;
+      case 'closeTab': if (typeof m.id === 'string') { await this.closeTab(m.id); } break;
+      case 'historyList': await this.pushHistory(typeof m.query === 'string' ? m.query.slice(0, 200) : ''); break;
+      case 'openChat': if (typeof m.id === 'string') { await this.openChat(m.id); } break;
+      case 'renameChat': if (typeof m.id === 'string') { await this.renameChat(m.id, typeof m.title === 'string' ? m.title : undefined); } break;
+      case 'deleteChat': if (typeof m.id === 'string') { await this.deleteChat(m.id); } break;
+      case 'exportChat': await this.exportChat(typeof m.id === 'string' ? m.id : undefined); break;
       case 'updateSettings': await this.updateSettings(m); break;
       case 'setApiKey': await vscode.commands.executeCommand('vsgrok.setApiKey'); break;
       case 'getApiKey': await vscode.commands.executeCommand('vsgrok.signIn'); break;
@@ -660,7 +881,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const newInput: InputItem[] = [];
     // `instructions` cannot be combined with previous_response_id, so the system prompt is a system message in input.
     // On a fresh chain it opens the conversation; when Agent is toggled mid-chat a new system message states the change.
-    if (!this.conv.items.length) { newInput.push({ role: 'system', content: sysText }); }
+    if (!this.conv.items.length || this.convMode === 'restored') { newInput.push({ role: 'system', content: sysText }); } // restored = rebuilt from a saved transcript
     else if (this.convMode !== mode) { newInput.push({ role: 'system', content: agent ? 'Update:' + AGENT_PROMPT : 'Update:' + NO_AGENT_PROMPT }); }
     if (this.conv.items.length && rules?.hash !== this.rulesHash) {
       newInput.push({ role: 'system', content: rules ? 'Update: the project instructions changed.' + rulesPrompt(rules) : 'Update: the project instruction file was removed; ignore earlier project instructions.' });

@@ -412,6 +412,75 @@
   [['web-toggle', 'web'], ['x-toggle', 'x']].forEach(([id, tool]) => {
     $(id).addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; setToggle(id, on); vscode.postMessage({ type: 'setServerTool', tool, enabled: on }); });
   });
+  // ---- tabs + history ----
+  const tabsEl = $('tabs');
+  function renderTabs(tabs, active) {
+    tabsEl.innerHTML = '';
+    tabs.forEach((t) => {
+      const wrap = document.createElement('div'); wrap.className = 'tab' + (t.id === active ? ' active' : '');
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'tab-btn'; b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(t.id === active)); b.tabIndex = t.id === active ? 0 : -1;
+      b.textContent = VSGrokCards.firstLine(t.title, 28) || 'New chat'; b.title = t.title; b.dataset.id = t.id;
+      b.addEventListener('click', () => vscode.postMessage({ type: 'switchTab', id: t.id }));
+      b.addEventListener('keydown', (e) => {
+        const bs = [...tabsEl.querySelectorAll('.tab-btn')]; const i = bs.indexOf(b);
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const n = bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length]; n.focus(); }
+        if (e.key === 'Delete') { e.preventDefault(); vscode.postMessage({ type: 'closeTab', id: t.id }); }
+      });
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'tab-close'; x.textContent = '×'; x.setAttribute('aria-label', 'Close ' + (t.title || 'chat') + ' (stays in history)');
+      x.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'closeTab', id: t.id }); });
+      wrap.appendChild(b); if (tabs.length > 1) { wrap.appendChild(x); } tabsEl.appendChild(wrap);
+    });
+    const add = document.createElement('button'); add.type = 'button'; add.className = 'tab-add'; add.textContent = '+'; add.setAttribute('aria-label', 'New chat tab');
+    add.addEventListener('click', () => vscode.postMessage({ type: 'newTab' }));
+    tabsEl.appendChild(add);
+  }
+  const hp = $('history-panel'); const hs = $('history-search'); const hl = $('history-list'); const hb = $('history-btn');
+  let histTimer = null;
+  function setHistory(open) {
+    hp.hidden = !open; hb.setAttribute('aria-expanded', String(open));
+    if (open) { vscode.postMessage({ type: 'historyList', query: hs.value }); hs.focus(); } else { hb.focus(); }
+  }
+  hb.addEventListener('click', () => setHistory(hp.hidden));
+  hp.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setHistory(false); } });
+  hs.addEventListener('input', () => { clearTimeout(histTimer); histTimer = setTimeout(() => vscode.postMessage({ type: 'historyList', query: hs.value }), 150); });
+  $('history-export').addEventListener('click', () => vscode.postMessage({ type: 'exportChat' }));
+  function renderHistory(items, query) {
+    hl.innerHTML = '';
+    if (!items.length) { const li = document.createElement('li'); li.className = 'hist-empty'; li.textContent = query ? 'No chats match "' + query + '".' : 'No saved chats yet. Chats are saved on this machine after each answer.'; hl.appendChild(li); return; }
+    for (const it of items) {
+      const li = document.createElement('li'); li.className = 'hist-item'; li.dataset.id = it.id;
+      const open = document.createElement('button'); open.type = 'button'; open.className = 'hist-open';
+      const t = document.createElement('span'); t.className = 'hist-title'; t.textContent = it.title + (it.open ? ' (open)' : '');
+      const meta = document.createElement('span'); meta.className = 'hist-meta'; meta.textContent = VSGrokCards.relTime(it.updated) + ' · ' + it.count + ' messages' + (it.preview ? ' · ' + it.preview : '');
+      open.appendChild(t); open.appendChild(meta);
+      open.setAttribute('aria-label', 'Open ' + it.title + ', ' + VSGrokCards.relTime(it.updated));
+      open.addEventListener('click', () => { vscode.postMessage({ type: 'openChat', id: it.id }); setHistory(false); });
+      const acts = document.createElement('span'); acts.className = 'hist-actions';
+      const mk = (label, aria, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'h-btn link'; b.textContent = label; b.setAttribute('aria-label', aria + ' ' + it.title); b.addEventListener('click', fn); acts.appendChild(b); return b; };
+      mk('Rename', 'Rename', () => vscode.postMessage({ type: 'renameChat', id: it.id }));
+      mk('Export', 'Export to Markdown', () => vscode.postMessage({ type: 'exportChat', id: it.id }));
+      const del = mk('Delete', 'Delete', () => {
+        if (del.dataset.confirm) { vscode.postMessage({ type: 'deleteChat', id: it.id }); return; }
+        del.dataset.confirm = '1'; del.textContent = 'Confirm delete'; del.classList.add('danger');
+        setTimeout(() => { if (del.isConnected) { delete del.dataset.confirm; del.textContent = 'Delete'; del.classList.remove('danger'); } }, 4000);
+      });
+      li.appendChild(open); li.appendChild(acts); hl.appendChild(li);
+    }
+  }
+  function renderTranscript(msgs) {
+    taskCards.clear(); approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false);
+    let n = 0;
+    for (const m of msgs) {
+      if (m.role === 'user') { addUser(String(m.text || ''), [], [], m.imageNames); continue; }
+      const t = startTurn('h' + (++n) + '-' + Date.now().toString(36));
+      t.raw = String(m.text || '');
+      finishTurn(t, m.state === 'stopped' ? 'stopped' : 'done', {});
+    }
+    if (msgs.length && msgs[msgs.length - 1].role === 'user') { /* last turn had no answer */ }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    announce.textContent = msgs.length ? 'Chat opened: ' + msgs.length + ' messages' : 'New chat';
+  }
   const sp = $('settings-panel');
   $('settings-btn').addEventListener('click', (e) => { const o = sp.classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(o)); });
   const modelIn = $('model');
@@ -799,6 +868,10 @@
       case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }
       case 'toast': toast(m.msg); break;
       case 'taskStart': taskCard(m); break;
+      case 'openHistory': setHistory(true); break;
+      case 'tabs': renderTabs(m.tabs || [], m.active); break;
+      case 'historyItems': renderHistory(m.items || [], String(m.query || '')); break;
+      case 'transcript': renderTranscript(m.messages || []); break;
       case 'taskProgress': {
         const card = taskCards.get(String(m.id)); if (!card) { break; }
         card.querySelector('.task-progress').textContent = VSGrokCards.taskProgressText(m);

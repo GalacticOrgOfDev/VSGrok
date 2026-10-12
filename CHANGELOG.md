@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.0 — 2026-10-12
+**Chat history**
+- Chats are saved locally after every answer (and when you switch, close or start a chat) under VS Code's global storage: one JSON file per chat plus an index, keeping the newest 200 chats.
+- **Never stored:** API keys. Every saved string is redacted for secret-looking tokens (`xai-…`, `sk-…`, GitHub tokens, JWTs, `token=`/`password=` values), and images are replaced by a placeholder. xAI's opaque encrypted reasoning is kept as-is so stateless chats can resume. A chat over 4 MB drops its model state first (it resumes from the transcript), then its oldest messages.
+- **🕘 History** (header, or *VSGrok: Chat History*) opens a searchable list with relative times and previews. Each chat has **Open**, **Rename**, **Export** and **Delete** (a second click confirms). Esc closes the list.
+- **Tabs:** a tab strip above the chat holds up to 8 open chats. Use **+** (or *VSGrok: New Chat Tab*) to add one, click or arrow keys to switch, and × or Delete to close (the chat stays in history). Switching waits until Grok has finished answering.
+- **Resume** works with or without server-side storage:
+  - stored chats continue with `previous_response_id` (falling back to the saved local items if xAI no longer has the response);
+  - `store: false` chats resend the saved local items;
+  - chats without saved model state are rebuilt from the transcript with a fresh system prompt.
+- **Export to Markdown** (*VSGrok: Export Chat to Markdown*, or **Export .md** in the history panel) writes `# title`, a metadata line, then `## You` / `## Grok` sections. It is redacted the same way, and the default file name is the chat title in the workspace root.
+- New setting `vsgrok.history.enabled` (default on).
+
 ## 0.10.0 — 2026-10-12
 **Run task (background agent)**
 - **▶ Task** next to Send, or *VSGrok: Run Task in Background*, runs a goal as a task. Grok inspects the code, states a short plan, edits, runs `run_tests` and `get_problems`, and fixes failures until green or blocked, then summarises.

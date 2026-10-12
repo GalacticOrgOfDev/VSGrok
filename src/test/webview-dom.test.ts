@@ -311,3 +311,34 @@ test('task mode: toggle sends runTask; progress card updates, logs approvals, en
   post({ type: 'taskUndone', id: 't1', ok: true, msg: 'Restored 2 file(s).' });
   assert.equal(card.dataset.state, 'undone');
 });
+
+test('tabs, history panel and transcript', () => {
+  const { d, post, sent } = boot();
+  post({ type: 'tabs', active: 'c2', tabs: [{ id: 'c1', title: 'First chat' }, { id: 'c2', title: 'Second' }] });
+  const tabs = [...d.querySelectorAll('#tabs [role=tab]')] as HTMLButtonElement[];
+  assert.equal(tabs.length, 2); assert.equal(tabs[1].getAttribute('aria-selected'), 'true'); assert.equal(tabs[0].tabIndex, -1);
+  tabs[0].click(); assert.ok(sent.some(m => m.type === 'switchTab' && m.id === 'c1'));
+  (d.querySelector('#tabs .tab-close') as HTMLButtonElement).click(); assert.ok(sent.some(m => m.type === 'closeTab' && m.id === 'c1'));
+  (d.querySelector('#tabs .tab-add') as HTMLButtonElement).click(); assert.ok(sent.some(m => m.type === 'newTab'));
+  post({ type: 'tabs', active: 'c3', tabs: [{ id: 'c3', title: 'Only' }] });
+  assert.equal(d.querySelectorAll('#tabs .tab-close').length, 0, 'a single tab has no close button');
+  const hb = d.getElementById('history-btn') as HTMLButtonElement;
+  hb.click(); assert.equal((d.getElementById('history-panel') as HTMLElement).hidden, false); assert.equal(hb.getAttribute('aria-expanded'), 'true');
+  assert.ok(sent.some(m => m.type === 'historyList'));
+  post({ type: 'historyItems', query: '', items: [{ id: 'c9', title: 'Parser bug', updated: Date.now() - 7200_000, count: 4, preview: 'Because', open: false }] });
+  const item = d.querySelector('.hist-item') as HTMLElement;
+  assert.match(item.querySelector('.hist-meta')!.textContent!, /^2 h ago · 4 messages · Because/);
+  const del = [...item.querySelectorAll('.hist-actions button')].find(b => b.textContent === 'Delete') as HTMLButtonElement;
+  del.click(); assert.ok(!sent.some(m => m.type === 'deleteChat'), 'first click only arms'); assert.equal(del.textContent, 'Confirm delete');
+  del.click(); assert.ok(sent.some(m => m.type === 'deleteChat' && m.id === 'c9'));
+  ([...item.querySelectorAll('.hist-actions button')].find(b => b.textContent === 'Export') as HTMLButtonElement).click();
+  assert.ok(sent.some(m => m.type === 'exportChat' && m.id === 'c9'));
+  (item.querySelector('.hist-open') as HTMLButtonElement).click();
+  assert.ok(sent.some(m => m.type === 'openChat' && m.id === 'c9')); assert.equal((d.getElementById('history-panel') as HTMLElement).hidden, true);
+  post({ type: 'historyItems', query: 'zzz', items: [] }); assert.match(d.querySelector('.hist-empty')!.textContent!, /No chats match "zzz"/);
+  post({ type: 'transcript', messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: '**bold** answer', state: 'done' }] });
+  assert.equal(d.querySelectorAll('.message.user').length, 1);
+  assert.equal(d.querySelector('.message.assistant strong')!.textContent, 'bold');
+  assert.equal(d.getElementById('sr-announce')!.textContent, 'Chat opened: 2 messages');
+  assert.equal((d.getElementById('send') as HTMLButtonElement).getAttribute('aria-label'), 'Send');
+});

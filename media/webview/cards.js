@@ -122,5 +122,13 @@
   }
   function levelLabel(l) { return l === 'editsAndCommands' ? 'Auto-approving workspace edits and allowlisted commands' : l === 'safeEdits' ? 'Auto-approving workspace edits' : 'Asking before every edit and command'; }
 
-  return { fmtTok, taskProgressText, taskEndHead, levelLabel, IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, imagesOnlyPrompt, toastMs, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
+  // ---- history ----
+  function relTime(ts, now) {
+    const s = Math.max(0, Math.round(((now || Date.now()) - ts) / 1000));
+    if (s < 60) { return 'just now'; }
+    if (s < 3600) { return Math.floor(s / 60) + ' min ago'; }
+    if (s < 86400) { return Math.floor(s / 3600) + ' h ago'; }
+    const d = Math.floor(s / 86400); return d === 1 ? 'yesterday' : d + ' days ago';
+  }
+  return { relTime, fmtTok, taskProgressText, taskEndHead, levelLabel, IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, imagesOnlyPrompt, toastMs, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
 });

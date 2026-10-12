@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -154,6 +154,21 @@
       {
         "command": "vsgrok.runTask",
         "title": "Run Task in Background",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.showHistory",
+        "title": "Chat History",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.exportChat",
+        "title": "Export Chat to Markdown",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.newChatTab",
+        "title": "New Chat Tab",
         "category": "VSGrok"
       }
     ],
@@ -567,6 +582,11 @@
           "default": 2,
           "minimum": 0,
           "description": "Run task: stop once the cost reported by xAI reaches this many US dollars (0 = no limit; ignored when xAI reports no cost)."
+        },
+        "vsgrok.history.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Save chats on this machine (VS Code global storage) after each answer so they can be searched, reopened, renamed, deleted and exported. API keys are never saved; text is redacted for secret-looking tokens and images are not kept. Turning this off stops saving; existing chats stay until deleted."
         }
       }
     },

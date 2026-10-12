@@ -316,3 +316,25 @@ button.cost-meter:focus-visible{outline:2px solid var(--vscode-focusBorder)}
 .task-log li{overflow-wrap:anywhere;padding:1px 0}
 .task-log li.asked{color:var(--vscode-editorWarning-foreground,#cca700)}
 @media (forced-colors:active){.task-toggle[aria-pressed=true]{outline:2px solid Highlight}.task-card{border-left-color:CanvasText}}
+/* tabs + history */
+#tabs{display:flex;gap:2px;align-items:stretch;overflow-x:auto;padding:2px 6px 0;border-bottom:1px solid var(--vscode-panel-border,transparent);scrollbar-width:thin}
+#tabs .tab{display:flex;align-items:center;border-radius:4px 4px 0 0;max-width:180px;flex:0 1 auto}
+#tabs .tab.active{background:var(--vscode-tab-activeBackground,var(--vscode-editor-background));box-shadow:inset 0 -2px 0 var(--vscode-focusBorder)}
+#tabs .tab-btn{background:none;border:0;color:inherit;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font:inherit;font-size:.92em;min-width:0}
+#tabs .tab:not(.active) .tab-btn{color:var(--vscode-descriptionForeground)}
+#tabs .tab-close,#tabs .tab-add{background:none;border:0;color:var(--vscode-descriptionForeground);cursor:pointer;padding:0 6px;font-size:1.05em;min-width:22px;min-height:22px}
+#tabs .tab-close:hover,#tabs .tab-add:hover{color:var(--vscode-foreground)}
+#tabs button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+#history-panel{padding:6px 10px;border-bottom:1px solid var(--vscode-panel-border,transparent);max-height:55vh;overflow:auto}
+.hist-top{display:flex;gap:6px;margin-bottom:6px}
+#history-search{flex:1;min-width:0;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);padding:3px 6px}
+#history-list{list-style:none;margin:0;padding:0}
+.hist-item{display:flex;flex-direction:column;gap:2px;padding:4px 0;border-bottom:1px solid var(--vscode-widget-border,transparent)}
+.hist-open{display:flex;flex-direction:column;align-items:flex-start;text-align:left;background:none;border:0;color:inherit;cursor:pointer;padding:2px 0;font:inherit;width:100%}
+.hist-open:focus-visible{outline:1px solid var(--vscode-focusBorder)}
+.hist-title{font-weight:600;overflow-wrap:anywhere}
+.hist-meta{font-size:.88em;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.hist-actions{display:flex;gap:8px}
+.hist-actions .danger{color:var(--vscode-errorForeground)}
+.hist-empty{color:var(--vscode-descriptionForeground);padding:6px 0}
+@media (forced-colors:active){#tabs .tab.active{outline:1px solid Highlight}}

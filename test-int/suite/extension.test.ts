@@ -41,7 +41,7 @@ suite('VSGrok in VS Code', () => {
   test('header markup: <header>, Rules chip right before the gear, cards.js loaded with nonce', async () => {
     const html: string = api.chat['view'].webview.html;
     assert.match(html, /<header id="header">[\s\S]*<\/header>/);
-    assert.match(html, /<button id="rules-chip"[^>]*><\/button>\s*<button id="settings-btn"[^>]*aria-controls="settings-panel"/);
+    assert.match(html, /<button id="rules-chip"[^>]*><\/button>\s*<button id="history-btn"[^>]*aria-controls="history-panel"[^>]*>🕘<\/button>\s*<button id="settings-btn"[^>]*aria-controls="settings-panel"/);
     assert.match(html, /<script nonce="[^"]+" src="[^"]*cards\.js"><\/script>\s*<script nonce="[^"]+" src="[^"]*main\.js">/);
   });
 
@@ -698,5 +698,77 @@ suite('VSGrok in VS Code', () => {
       await c.update('agent.task.maxTokens', undefined, vscode.ConfigurationTarget.Global);
       await c.update('agent.autoApprove', undefined, vscode.ConfigurationTarget.Workspace);
     }
+  });
+
+  // ---------- 0.11.0: chat history + tabs ----------
+  test('history: chats saved (redacted), tabs, reopen resumes via previous_response_id or local items, rename, export .md, delete', async () => {
+    await withMock('mock-text', async (xai) => {
+      const chat = api.chat;
+      type Req = { previous_response_id?: string; store?: boolean; input: { role?: string; content?: unknown }[] };
+      const reqs = async () => await (await fetch(xai + '/requests')).json() as Req[];
+      await chat.testReceive({ type: 'clearChat' }); await idle();
+      await chat.testReceive({ type: 'query', text: 'remember xai-ABCDEFGHIJKLMNOP for the parser' }); await idle();
+      await chat.saveNow();
+      const firstId: string = chat['chatId'];
+      const hits = await chat.store.list('parser');
+      assert.strictEqual(hits[0].id, firstId); assert.strictEqual(hits[0].title, 'remember [redacted] for the parser');
+      const raw = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(chat['ctx'].globalStorageUri, 'chats', `${firstId}.json`))).toString();
+      assert.doesNotMatch(raw, /xai-ABCDEFGH/); assert.doesNotMatch(raw, /test-key/);
+      const lastResp = JSON.parse(raw).conv.previousResponseId as string; assert.match(lastResp, /^resp_/);
+      // Second tab.
+      await chat.testReceive({ type: 'newTab' });
+      assert.deepStrictEqual(posts('transcript').at(-1).messages, []);
+      assert.strictEqual(posts('tabs').at(-1).tabs.length, 2);
+      await chat.testReceive({ type: 'query', text: 'second chat about docker' }); await idle();
+      // Switch back: transcript re-rendered, next turn chains on the first chat's response.
+      await chat.testReceive({ type: 'switchTab', id: firstId });
+      assert.strictEqual(posts('transcript').at(-1).messages.length, 2);
+      assert.strictEqual(posts('tabs').at(-1).active, firstId);
+      await chat.testReceive({ type: 'query', text: 'follow up' }); await idle();
+      assert.strictEqual((await reqs()).at(-1)!.previous_response_id, lastResp);
+      // Close and reopen from disk: still resumes server-side.
+      await chat.saveNow();
+      const resp2 = (await chat.store.load(firstId)).conv.previousResponseId;
+      await chat.testReceive({ type: 'closeTab', id: firstId });
+      assert.strictEqual(posts('tabs').at(-1).tabs.length, 1);
+      await chat.testReceive({ type: 'historyList', query: '' });
+      assert.ok(posts('historyItems').at(-1).items.some((x: { id: string; open: boolean }) => x.id === firstId && !x.open));
+      await chat.testReceive({ type: 'openChat', id: firstId });
+      assert.strictEqual(posts('transcript').at(-1).messages.length, 4);
+      await chat.testReceive({ type: 'query', text: 'after reopen' }); await idle();
+      assert.strictEqual((await reqs()).at(-1)!.previous_response_id, resp2);
+      // Without server-side storage: the saved local items are resent.
+      const c = vscode.workspace.getConfiguration('vsgrok');
+      await c.update('responses.store', false, vscode.ConfigurationTarget.Global);
+      try {
+        await chat.testReceive({ type: 'newTab' });
+        await chat.testReceive({ type: 'query', text: 'stateless chat alpha' }); await idle();
+        const sid: string = chat['chatId'];
+        await chat.saveNow();
+        await chat.testReceive({ type: 'closeTab', id: sid });
+        await chat.testReceive({ type: 'openChat', id: sid });
+        await chat.testReceive({ type: 'query', text: 'stateless follow up' }); await idle();
+        const last = (await reqs()).at(-1)!;
+        assert.strictEqual(last.previous_response_id, undefined); assert.strictEqual(last.store, false);
+        assert.match(JSON.stringify(last.input), /stateless chat alpha[\s\S]*A red square[\s\S]*stateless follow up/);
+        // Rename, export, delete.
+        await chat.testReceive({ type: 'renameChat', id: sid, title: 'Alpha notes' });
+        assert.strictEqual((await chat.store.list('alpha'))[0].title, 'Alpha notes');
+        assert.strictEqual(posts('tabs').at(-1).tabs.find((t: { id: string }) => t.id === sid).title, 'Alpha notes');
+        const out = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, 'alpha-export.md');
+        await chat.exportChat(sid, out);
+        const md = Buffer.from(await vscode.workspace.fs.readFile(out)).toString();
+        assert.match(md, /^# Alpha notes\n/); assert.match(md, /## You\n\nstateless chat alpha/); assert.match(md, /## Grok\n\nA red square\./);
+        await vscode.workspace.fs.delete(out);
+        await chat.testReceive({ type: 'deleteChat', id: sid });
+        assert.deepStrictEqual(await chat.store.list('alpha'), []);
+        await assert.rejects(Promise.resolve(vscode.workspace.fs.stat(vscode.Uri.joinPath(chat['ctx'].globalStorageUri, 'chats', `${sid}.json`))));
+      } finally { await c.update('responses.store', undefined, vscode.ConfigurationTarget.Global); }
+      // Switching is refused while busy.
+      chat['busy'] = true; const t0 = posts('toast').length;
+      await chat.testReceive({ type: 'newTab' });
+      assert.match(posts('toast')[t0].msg, /Wait for Grok to finish/);
+      chat['busy'] = false;
+    });
   });
 });

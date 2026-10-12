@@ -23,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
   initStatus(context);
   registerProposals(context);
   const chat = new ChatViewProvider(context);
+  context.subscriptions.push({ dispose: () => chat.dispose() });
   const reg = (id: string, fn: (...a: never[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
   context.subscriptions.push(
@@ -106,6 +107,9 @@ export function activate(context: vscode.ExtensionContext) {
     const q = typeof goal === 'string' ? goal : await vscode.window.showInputBox({ prompt: 'Task for Grok to run on its own (plan, edit, test, fix). Risky steps still ask in the chat.', ignoreFocusOut: true });
     if (q?.trim()) { await chat.runTask(q.trim()); }
   });
+  reg('vsgrok.showHistory', async () => { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); chat.openHistoryPanel(); });
+  reg('vsgrok.exportChat', () => chat.exportChat());
+  reg('vsgrok.newChatTab', async () => { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); await chat.newTab(); });
   reg('vsgrok.stop', () => chat.stop());
   reg('vsgrok.toggleInline', async () => {
     const c = cfg();
