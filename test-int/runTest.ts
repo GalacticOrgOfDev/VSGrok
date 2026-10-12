@@ -38,7 +38,7 @@ async function main() {
   const xaiRequests: unknown[] = [];
   const chatRequests: unknown[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const responsesReplies: { output?: any[]; text?: string; usage?: any }[] = [];
+  const responsesReplies: { output?: any[]; text?: string; usage?: any; status?: number; error?: string }[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chatReplies: { text: string; toolCalls?: any[] }[] = [];
   function mockXai(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -78,8 +78,9 @@ async function main() {
         if (parsed.store === false && Array.isArray(parsed.input) && parsed.input.some(i => i?.type === 'reasoning' && !i.encrypted_content)) {
           res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'reasoning item without encrypted_content cannot be resolved' } })); return;
         }
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const q = responsesReplies.shift();
+        if (q?.status) { res.writeHead(q.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: q.error ?? 'mock failure' } })); return; }
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const txt = q?.text ?? (q?.output ? '' : 'A red square.');
         const msg = { type: 'message', id: `msg_${n}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: txt, annotations: [] }] };
         if (q?.output) {

@@ -178,3 +178,18 @@ test('commit message structured output rendering', () => {
   assert.equal(renderCommitMessage('{"subject":"fix: y","body":[]}'), 'fix: y');
   assert.equal(renderCommitMessage('plain message'), 'plain message');
 });
+
+test('0.14.2: resendFull ignores a stale chain id, sends the full local list once, then chains again', async () => {
+  const srv = await fake((_b, n, r) => sse(r, n === 1 ? turn1() : turn2()));
+  const state: ConversationState = { items: [{ role: 'user', content: 'first message' }, { role: 'assistant', content: '[interrupted]' }], previousResponseId: 'resp_old', resendFull: true };
+  await runResponsesLoop({
+    state, newInput: [{ role: 'user', content: 'try again' }], tools: [{ type: 'function', name: 'read_file', description: 'r', parameters: {} }], maxSteps: 5, useChain: true,
+    request: (input, prev, tools) => streamResponse({ apiKey: 'k', baseUrl: srv.url, model: 'm', input, previousResponseId: prev, tools, store: true }),
+    execute: async () => 'x',
+  });
+  srv.close();
+  assert.equal(srv.bodies[0].previous_response_id, undefined);
+  assert.match(JSON.stringify(srv.bodies[0].input), /first message[\s\S]*try again/);
+  assert.equal(srv.bodies[1].previous_response_id, 'resp_1');
+  assert.equal(state.resendFull, false);
+});

@@ -100,3 +100,4 @@ export function toMarkdown(r: ChatRecord): string {
   }
   return out.join('\n');
 }
+

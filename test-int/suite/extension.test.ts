@@ -718,6 +718,49 @@ suite('VSGrok in VS Code', () => {
   });
 
   // ---------- 0.11.0: chat history + tabs ----------
+  test('0.14.2: Run Demo sends the trigger; read_extension_doc reads only bundled DEMO.md; hint in system prompt', async () => {
+    const doc = await vscode.commands.executeCommand<string>('vsgrok.__testRunTool', 'read_extension_doc', { name: 'DEMO.md' });
+    assert.match(doc, /instructions for Grok/);
+    const bad = await vscode.commands.executeCommand<string>('vsgrok.__testRunTool', 'read_extension_doc', { name: '../package.json' });
+    assert.match(bad, /^Refused/);
+    await withMock('mock-text', async (xai) => {
+      await api.chat.testReceive({ type: 'clearChat' }); await idle();
+      await vscode.commands.executeCommand('vsgrok.runDemo'); await idle();
+      const last = (await (await fetch(xai + '/requests')).json() as { input: unknown[]; tools?: { name?: string }[] }[]).at(-1)!;
+      assert.match(JSON.stringify(last.input), /execute the demo/);
+      assert.match(JSON.stringify(last.input), /read_extension_doc with name \\"DEMO.md\\"/);
+      assert.ok(last.tools?.some(t => t.name === 'read_extension_doc'));
+    });
+  });
+
+  test('0.14.2 bug: a failed or stopped first turn stays in model context (store on, chained)', async () => {
+    await withMock('mock-text', async (xai) => {
+      const chat = api.chat;
+      type Req = { previous_response_id?: string; input: unknown[] };
+      const reqs = async () => await (await fetch(xai + '/requests')).json() as Req[];
+      await vscode.workspace.getConfiguration('vsgrok').update('responses.store', true, vscode.ConfigurationTarget.Global);
+      await chat.testReceive({ type: 'clearChat' }); await idle();
+      // Turn 1 fails (non-retryable error).
+      await rreply(xai, { status: 400, error: 'boom' });
+      await chat.testReceive({ type: 'query', text: 'wanna see something cool? run git pull' }); await idle();
+      assert.ok(posts('streamError').length);
+      await chat.testReceive({ type: 'query', text: 'we are going to try that again' }); await idle();
+      const t2 = (await reqs()).at(-1)!;
+      const t1id = `resp_${(await reqs()).length - 1}`;
+      assert.ok(t2.previous_response_id === t1id || /wanna see something cool[\s\S]*try that again/.test(JSON.stringify(t2.input)),
+        'turn 2 must chain to turn 1 or include its text: ' + JSON.stringify(t2).slice(0, 400));
+      // Turn 3 chains normally on turn 2's response.
+      await chat.testReceive({ type: 'query', text: 'third' }); await idle();
+      assert.strictEqual((await reqs()).at(-1)!.previous_response_id, `resp_${(await reqs()).length - 1}`);
+      // Guard: even if the local context loses a shown message, it is rebuilt from the transcript.
+      chat['conv'] = { items: [], previousResponseId: 'resp_bogus' };
+      await chat.testReceive({ type: 'query', text: 'fourth' }); await idle();
+      const t4 = (await reqs()).at(-1)!;
+      assert.strictEqual(t4.previous_response_id, undefined);
+      assert.match(JSON.stringify(t4.input), /wanna see something cool[\s\S]*try that again[\s\S]*third[\s\S]*fourth/);
+    });
+  });
+
   test('history: chats saved (redacted), tabs, reopen resumes via previous_response_id or local items, rename, export .md, delete', async () => {
     await withMock('mock-text', async (xai) => {
       const chat = api.chat;
@@ -744,14 +787,15 @@ suite('VSGrok in VS Code', () => {
       assert.deepStrictEqual(posts('transcript').at(-1).messages, []);
       assert.strictEqual(posts('tabs').at(-1).tabs.length, 2);
       await chat.testReceive({ type: 'query', text: 'second chat about docker' }); await idle();
-      // Switch back: transcript re-rendered, next turn chains on the first chat's response.
+      // Switch back: transcript re-rendered; the chain isn't trusted after a tab switch, so the full local list is sent.
       await chat.testReceive({ type: 'switchTab', id: firstId });
       assert.strictEqual((chat['contexts'] as { label?: string }[])[0]?.label, 'only-in-tab-1.ts'); chat['contexts'] = []; chat['pushContexts']();
       assert.strictEqual(posts('transcript').at(-1).messages.length, 2);
       assert.strictEqual(posts('tabs').at(-1).active, firstId);
       await chat.testReceive({ type: 'query', text: 'follow up' }); await idle();
-      assert.strictEqual((await reqs()).at(-1)!.previous_response_id, lastResp);
-      // Close and reopen from disk: still resumes server-side.
+      { const l = (await reqs()).at(-1)!; assert.ok(lastResp); assert.strictEqual(l.previous_response_id, undefined); assert.match(JSON.stringify(l.input), /remember[\s\S]*follow up/); }
+      { await chat.testReceive({ type: 'query', text: 'chained again' }); await idle(); const r = await reqs(); assert.match(r.at(-1)!.previous_response_id ?? '', /^resp_/, 'chaining resumes after a full send'); }
+      // Close and reopen from disk: the saved local items are resent in full.
       await chat.saveNow();
       const resp2 = (await chat.store.load(firstId)).conv.previousResponseId;
       await chat.testReceive({ type: 'closeTab', id: firstId });
@@ -759,9 +803,9 @@ suite('VSGrok in VS Code', () => {
       await chat.testReceive({ type: 'historyList', query: '' });
       assert.ok(posts('historyItems').at(-1).items.some((x: { id: string; open: boolean }) => x.id === firstId && !x.open));
       await chat.testReceive({ type: 'openChat', id: firstId });
-      assert.strictEqual(posts('transcript').at(-1).messages.length, 4);
+      assert.strictEqual(posts('transcript').at(-1).messages.length, 6);
       await chat.testReceive({ type: 'query', text: 'after reopen' }); await idle();
-      assert.strictEqual((await reqs()).at(-1)!.previous_response_id, resp2);
+      { const l = (await reqs()).at(-1)!; assert.ok(resp2); assert.strictEqual(l.previous_response_id, undefined); assert.match(JSON.stringify(l.input), /remember[\s\S]*follow up[\s\S]*after reopen/); }
       // Without server-side storage: the saved local items are resent.
       const c = vscode.workspace.getConfiguration('vsgrok');
       await c.update('responses.store', false, vscode.ConfigurationTarget.Global);

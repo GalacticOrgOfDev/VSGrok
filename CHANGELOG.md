@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.2 — 2026-10-12
+
+**Fixed**
+- **A chat's first message could silently drop out of Grok's context.**
+  - When a turn failed or was stopped (an API error, a timeout, or pressing Stop during tool work), VSGrok rolled the context back to before that turn and removed your message with it, while the chat still showed it. With server-side chaining on, the next turn continued from the older response, so Grok never saw that message.
+  - Failed or stopped turns now keep your message, plus a note that the answer was cut off.
+  - VSGrok keeps a full local copy of every turn. When the server-side chain can't be trusted (after a failed or stopped turn, a tab switch, reopening a chat, or compaction), the next request sends that full local copy, then goes back to chaining.
+  - A new guard works regardless of settings: if any message shown in the chat is missing from Grok's context, the context is rebuilt from the visible conversation before sending.
+
+**New**
+- **Demo mode.** `docs/DEMO.md` is now written as instructions for Grok and ships inside the extension. Say "execute the demo", "run the demo" or "build the example project", or run **VSGrok: Run Demo**.
+  - Grok reads the doc with the new read-only `read_extension_doc` tool, which can only open bundled docs.
+  - It then builds the `palette` sample CLI and showcases each tool in turn, narrating as it goes: overview, relevant files, web and X search, a multi-file plan, a deliberately failing test that it fixes, problems, an edit, an optional image step, a commit message, and a summary pointing at the cost meter.
+  - Every approval card still applies.
+  - In a workspace that isn't empty, the project goes in `palette/`.
+
 ## 0.14.1 — 2026-10-12
 Applies the JGrok security review and the UIGrok UI/a11y review of 0.9.0–0.14.0.
 

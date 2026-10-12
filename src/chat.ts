@@ -1,5 +1,6 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
 import { parseFileLink } from './gitCore';
+import { DEMO_LIMITS, isDemoTrigger } from './chatDemo';
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
 import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL, apiMode, serverTools } from './config';
@@ -41,9 +42,12 @@ export const SYSTEM_PROMPT =
   'When you give a full replacement for a file, put `path=<workspace-relative path>` after the language in the fence, e.g. ```ts path=src/a.ts. ' +
   'Never claim to have changed files unless a tool result says the edit was applied.';
 
+/** 0.14.2: demo trigger. The demo runs only through the normal tools and approval cards. */
+export const DEMO_HINT =
+  ' When the user asks to run or execute the demo, or to build the example/sample project, first call read_extension_doc with name "DEMO.md" and follow it step by step. All approvals stay in place.';
 const AGENT_PROMPT =
   ' Agent mode is on: you can also call propose_plan (preferred for changes to more than one file), propose_edit, run_tests and run_command; each shows an Approve/Deny card in the chat and only runs after the user approves. ' +
-  'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.';
+  'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.' + DEMO_HINT;
 
 const TASK_PROMPT =
   'Update: background task mode. Work through the task on your own: (1) inspect the relevant files, (2) state a short plan as a checklist, ' +
@@ -63,7 +67,7 @@ interface ChatSession {
   transcript: TranscriptMsg[];
   history: ChatMessage[]; conv: ConversationState; convMode?: string; lastInputTokens: number;
   lastUser?: { text: string; images?: string[]; hidden?: string; display?: string }; meter: MeterState; noStore: boolean; convId: string; rulesHash?: string;
-  preTurn?: { len: number; prev?: string; mode?: string };
+  preTurn?: { len: number; prev?: string; mode?: string; turns?: number };
   /** FM6: attached context chips and per-turn flags belong to their tab. */
   contexts?: ContextItem[]; editedThisTurn?: boolean; planAppliedThisTurn?: boolean;
 }
@@ -71,7 +75,7 @@ export const MAX_TABS = 8;
 
 const NO_AGENT_PROMPT =
   ' Agent mode is off: you cannot edit files or run commands. Show changes as code blocks with path=… so the user can click Apply, ' +
-  'or tell them to switch on Agent in the chat header.';
+  'or tell them to switch on Agent in the chat header.' + ' To run the demo or build the example project, Agent mode must be on: ask the user to turn on Agent in the header.';
 
 interface ContextItem {
   id: string;
@@ -311,7 +315,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
   private restore(x: ChatSession) {
     this.chatId = x.id; this.chatTitle = x.title; this.chatTitled = x.titled; this.chatCreated = x.created; this.transcript = x.transcript;
-    this.history = x.history; this.conv = x.conv; this.convMode = x.convMode; this.lastInputTokens = x.lastInputTokens; this.lastUser = x.lastUser;
+    this.history = x.history; this.conv = x.conv; if (x.conv.items.length) { x.conv.resendFull = true; } /* tab switch/restore: do not trust the chain */ this.convMode = x.convMode; this.lastInputTokens = x.lastInputTokens; this.lastUser = x.lastUser;
     this.meter = x.meter; this.noStore = x.noStore; this.convId = x.convId; this.rulesHash = x.rulesHash; this.preTurn = x.preTurn;
     this.contexts = x.contexts ?? []; this.editedThisTurn = !!x.editedThisTurn; this.planAppliedThisTurn = !!x.planAppliedThisTurn;
     this.pushContexts();
@@ -325,7 +329,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const prev = r.conv?.items?.length && !r.noStore ? r.conv.previousResponseId : undefined;
     const history: ChatMessage[] = transcriptToItems(r.messages).map(m => ({ role: m.role, content: m.content }));
     return { id: r.id, title: r.title, titled: !!r.titled, created: r.created, transcript: r.messages.map(m => ({ ...m })), history,
-      conv: { items, previousResponseId: prev }, convMode: r.conv?.items?.length ? undefined : 'restored', lastInputTokens: 0, meter: emptyMeter(),
+      conv: { items, previousResponseId: prev, resendFull: true, userTurns: r.messages.filter(m => m.role === 'user').length }, convMode: r.conv?.items?.length ? undefined : 'restored', lastInputTokens: 0, meter: emptyMeter(),
       noStore: !!r.noStore, convId: r.convId && /^[\w-]{8,64}$/.test(r.convId) ? r.convId : newConvId() };
   }
 
@@ -470,7 +474,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'runTask': if (typeof m.text === 'string') { await this.runTask(m.text); } break;
       case 'undoTask': if (typeof m.id === 'string') { await this.undoTask(m.id); } break;
       case 'regenerate': if (this.lastUser && !this.busy) {
-        if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev }; this.convMode = this.preTurn.mode; }
+        if (this.preTurn) { this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev, resendFull: true, userTurns: this.preTurn.turns }; this.convMode = this.preTurn.mode; }
         while (this.history.length && this.history[this.history.length - 1].role !== 'user') { this.history.pop(); }
         this.history.pop();
         while (this.transcript.length && this.transcript[this.transcript.length - 1].role !== 'user') { this.transcript.pop(); }
@@ -576,6 +580,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
+
+  /** VSGrok: Run Demo — sends the trigger phrase like a typed message (Grok then reads the bundled DEMO.md). */
+  async runDemo() {
+    if (this.busy) { this.post({ type: 'toast', msg: 'Wait for Grok to finish (or press Stop) before starting the demo.' }); return; }
+    await this.handleQuery('execute the demo', undefined, undefined);
+  }
 
   private async handleQuery(text: string, rawImages: unknown, rawNames: unknown) {
     const { images, dropped, kept } = filterImages(rawImages);
@@ -797,6 +807,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private consentHinted = false;
   private task?: TaskRun;
+  /** Demo budget (0.14.2): spend since the demo started in this chat; turns in demo mode stop at the limits. */
+  private demo?: { chatId: string; tokens: number; costUsd: number; costMissing: boolean };
   /** Finished tasks that can still be undone (most recent 5). */
   private taskTrackers = new Map<string, TaskTracker>();
   private taskSeq = 0;
@@ -880,7 +892,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private resetConv() { this.conv = { items: [] }; this.convMode = undefined; this.lastInputTokens = 0; this.preTurn = undefined; }
-  private preTurn?: { len: number; prev?: string; mode?: string };
+  private preTurn?: { len: number; prev?: string; mode?: string; turns?: number };
 
   /** Responses API turn: previous_response_id chaining, encrypted reasoning passed back, server-side tools, citations. */
   private async sendResponses(aid: string, full: string, images?: string[]) {
@@ -892,14 +904,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (images?.length && !this.noStore) {
       this.noStore = true;
       // M1: reasoning from store=true turns has no encrypted_content and can't be resent statelessly.
-      this.conv = { items: dropUnresolvableReasoning(this.conv.items).items };
+      this.conv = { ...this.conv, items: dropUnresolvableReasoning(this.conv.items).items, previousResponseId: undefined };
     }
     // H1: don't keep resending old images. Keep the most recent image turn for follow-ups; drop all older ones
     // (and all previous ones when this turn brings new images).
-    if (this.noStore) { this.conv = { items: stripOldImages(this.conv.items, images?.length ? 0 : 1).items }; }
+    if (this.noStore) { this.conv = { ...this.conv, previousResponseId: undefined, items: stripOldImages(this.conv.items, images?.length ? 0 : 1).items }; }
     const store = (c.get<boolean>('responses.store') ?? true) && !this.noStore;
     const maxSteps = task ? task.maxSteps : clampNum(c.get('agent.maxSteps'), 1, 50, 15);
     const limits = this.taskLimits();
+    if (!task && isDemoTrigger(this.lastUser?.text ?? '')) { this.demo = { chatId: this.chatId, tokens: 0, costUsd: 0, costMissing: false }; }
+    const demo = this.demo?.chatId === this.chatId ? this.demo : undefined;
     const cts = this.cts!;
     const signal = this.abort!.signal;
     const base = await requestOptions(this.ctx, { signal, convId: this.convId });
@@ -910,7 +924,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'running', label: 'Compacting long conversation…' });
       try {
         const r = await compactInput({ ...base, model: base.model }, stripOldImages(this.conv.items, 0).items); // M2: no image payloads to compaction
-        this.conv = { items: r.output };
+        this.conv = { items: r.output, resendFull: true, userTurns: this.conv.userTurns ?? this.transcript.filter(m => m.role === 'user').length - 1 };
         this.lastInputTokens = 0;
         this.post({ type: 'toolEvent', id: aid, toolId: 'compact', state: 'done', label: `Compacted conversation${r.dropped ? ` (${r.dropped} messages folded)` : ''}` });
       } catch (e) {
@@ -918,6 +932,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    this.ensureTranscriptInContext();
     const content: InputItem['content'] = images?.length
       ? [{ type: 'input_text', text: full }, ...images.map(u => ({ type: 'input_image', image_url: u }))]
       : full;
@@ -934,7 +949,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.rulesHash = rules?.hash;
     if (task) { newInput.push({ role: 'system', content: TASK_PROMPT }); }
     newInput.push({ role: 'user', content });
-    this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode };
+    this.preTurn = { len: this.conv.items.length, prev: this.conv.previousResponseId, mode: this.convMode, turns: this.conv.userTurns };
+    const turnsAfter = (this.conv.userTurns ?? 0) + 1;
     this.convMode = mode;
 
     if (agent && mcp()) { await Promise.race([mcp()!.ready(), new Promise(r => setTimeout(r, 3000))]); }
@@ -983,7 +999,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.post({ type: 'toolEvent', id: aid, toolId: t, state: 'running', label: toolLabel(call.name, args) });
           if (task) { this.pushTask(toolLabel(call.name, args)); }
         },
-        budget: task ? (acc) => {
+        budget: !task && demo ? (acc) => {
+          const missing = demo.costMissing || acc.costMissing > 0;
+          return budgetExceeded({ tokens: demo.tokens + acc.inputTokens + acc.outputTokens, costUsd: missing ? undefined : demo.costUsd + acc.costTicks / 1e10 }, DEMO_LIMITS);
+        } : task ? (acc) => {
           task.tokens = acc.inputTokens + acc.outputTokens;
           task.costUsd = acc.costMissing >= task.steps && task.steps > 0 ? undefined : acc.costTicks / 1e10;
           task.costMissing = acc.costMissing;
@@ -1004,6 +1023,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         },
       });
       this.lastInputTokens = r.lastInputTokens;
+      this.conv.userTurns = turnsAfter;
       if (task) {
         task.tokens = r.inputTokens + r.outputTokens; task.costUsd = r.costMissing >= r.steps ? undefined : r.costTicks / 1e10; task.costMissing = r.costMissing;
         task.outcome = r.stopReason ? 'budget' : r.hitStepCap ? 'steps' : 'done';
@@ -1011,6 +1031,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (${task ? 'vsgrok.agent.task.maxSteps' : 'vsgrok.agent.maxSteps'})._` }); }
       this.offerChecks();
+      if (demo && !task) { demo.tokens += r.inputTokens + r.outputTokens; demo.costUsd += r.costTicks / 1e10; demo.costMissing ||= r.costMissing > 0; }
       this.meter = addTurn(this.meter, { input: r.inputTokens, output: r.outputTokens, reasoning: r.reasoningTokens, cached: r.cachedTokens,
         costUsd: r.costMissing >= r.steps ? undefined : r.costTicks / 1e10, costMissing: r.costMissing });
       this.pushMeter();
@@ -1025,10 +1046,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
       else { this.post({ type: 'streamError', id: aid, msg: err.message || String(e), kind: err.kind ?? 'generic', attempts: err.attempts }); }
       if (task) { task.outcome = err.kind === 'aborted' ? 'stopped' : 'error'; }
-      // Roll back to the last consistent state so no function_call is left without its output.
-      this.conv = { items: this.conv.items.slice(0, this.preTurn.len), previousResponseId: this.preTurn.prev };
-      this.convMode = this.preTurn.mode;
+      // Roll back to the last consistent state so no function_call is left without its output, but KEEP the user's
+      // message (it is on screen) plus a note that the answer was cut off. The server chain doesn't have this local
+      // state, so the next request sends the full local list.
+      this.conv = { items: [...this.conv.items.slice(0, this.preTurn?.len ?? 0), ...newInput.filter(i => i.role === 'user' || i.role === 'system'),
+        { role: 'assistant', content: `[My previous answer was ${err.kind === 'aborted' ? 'stopped by the user' : 'interrupted by an error'} before it finished.]` }],
+      previousResponseId: undefined, resendFull: true, userTurns: turnsAfter };
     }
+  }
+
+  /** Guard (independent of store/chain settings): every user message shown in this chat, before the current one, must be
+   *  in the model context. If any is missing, rebuild the context from the visible transcript and send it in full. */
+  private ensureTranscriptInContext() {
+    const shown = this.transcript.filter(m => m.role === 'user').length - 1; // minus the message being sent now
+    if (shown <= 0) { return; }
+    const have = this.conv.userTurns ?? this.conv.items.filter(i => i.role === 'user').length;
+    if (have >= shown) { return; }
+    diag('chat.contextRebuilt', { shown, have, items: this.conv.items.length });
+    this.conv = { items: transcriptToItems(this.transcript.slice(0, -1)), resendFull: true, userTurns: shown };
+    this.convMode = 'restored';
   }
 
   /** Legacy Chat Completions turn (vsgrok.api = "chat"). */
@@ -1132,6 +1168,7 @@ export function toolLabel(name: string, a: unknown, done = false): string {
   switch (name) {
     case 'get_workspace_overview': return done ? 'Looked at the workspace' : 'Looking at the workspace…';
     case 'read_file': return `${done ? 'Read' : 'Reading'} ${s(o.path)}`;
+    case 'read_extension_doc': return `${done ? 'Read' : 'Reading'} VSGrok ${s(o.name)}`;
     case 'list_files': return `${done ? 'Listed' : 'Listing'} files ${o.glob ? s(o.glob) : ''}`.trim();
     case 'search_workspace': return `${done ? 'Searched' : 'Searching'} for "${s(o.query)}"`;
     case 'propose_edit': return `${done ? 'Proposed edit to' : 'Proposing edit to'} ${s(o.path)}`;

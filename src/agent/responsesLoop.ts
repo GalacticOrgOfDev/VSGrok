@@ -9,6 +9,11 @@ import { parseArgs } from './loop';
 export interface ConversationState {
   items: InputItem[];
   previousResponseId?: string;
+  /** The server-side chain may not contain every local item (a turn failed or was stopped, the tab was switched, the
+   *  chat was restored): the next request sends the full local list instead of chaining. Cleared after a full send. */
+  resendFull?: boolean;
+  /** How many of the chat's visible user messages this context contains (the guard compares it with the UI). */
+  userTurns?: number;
 }
 
 export interface ResponsesLoopOptions {
@@ -43,7 +48,7 @@ export async function runResponsesLoop(o: ResponsesLoopOptions): Promise<Respons
 
   const send = async (pending: InputItem[], tools: ResponseTool[]): Promise<ResponsesResult> => {
     let res: ResponsesResult;
-    if (o.useChain && s.previousResponseId) {
+    if (o.useChain && s.previousResponseId && !s.resendFull) {
       try { res = await o.request(pending, s.previousResponseId, tools); }
       catch (e) {
         if (!isPreviousResponseMissing(e)) { throw e; }
@@ -54,6 +59,7 @@ export async function runResponsesLoop(o: ResponsesLoopOptions): Promise<Respons
     }
     s.items.push(...res.output);
     s.previousResponseId = o.useChain ? res.id : undefined;
+    s.resendFull = false;
     const u = res.usage;
     acc.outputTokens += u?.output_tokens ?? 0;
     acc.reasoningTokens += u?.output_tokens_details?.reasoning_tokens ?? 0;

@@ -72,3 +72,26 @@ test('update throttle resets when the installed version changes', () => {
   assert.equal(versionChanged('0.6.1', '0.6.2'), true);
   assert.equal(versionChanged('0.6.2', '0.6.2'), false);
 });
+
+test('0.14.2: demo doc is bundled, addressed to Grok, and keeps approvals', async () => {
+  const fs = await import('node:fs');
+  const md = fs.readFileSync('docs/DEMO.md', 'utf8');
+  assert.match(md, /^# VSGrok demo: instructions for Grok/);
+  for (const t of ['get_workspace_overview', 'find_relevant_files', 'propose_plan', 'run_tests', 'get_problems', 'propose_edit', 'Web search', 'X search', 'cost meter', 'palette/']) { assert.ok(md.includes(t), t); }
+  assert.match(md, /under \$1/); assert.match(md, /\$0\.80/); assert.match(md, /exactly one web search and one X search/);
+  assert.match(md, /approval stays in place/i);
+  assert.match(md, /## For the human: recording tips/);
+  assert.match(fs.readFileSync('.vscodeignore', 'utf8'), /^!docs\/DEMO\.md$/m);
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  assert.ok(pkg.contributes.commands.some((c: { command: string }) => c.command === 'vsgrok.runDemo'));
+});
+
+test('0.14.2: demo trigger phrases and $1 cap', async () => {
+  const { isDemoTrigger, DEMO_LIMITS } = await import('../chatDemo');
+  for (const t of ['hey grok, execute the demo', 'Run the demo', 'build the example project', 'please build the sample project']) { assert.ok(isDemoTrigger(t), t); }
+  for (const t of ['demolish the shed', 'what demo?', 'run tests']) { assert.ok(!isDemoTrigger(t), t); }
+  assert.deepEqual(DEMO_LIMITS, { maxCostUsd: 1, maxTokens: 400_000 });
+  const { budgetExceeded } = await import('../agent/autoApproveCore');
+  assert.match(budgetExceeded({ tokens: 10, costUsd: 1.01 }, DEMO_LIMITS) ?? '', /\$1\.00/);
+  assert.match(budgetExceeded({ tokens: 400_001 }, DEMO_LIMITS) ?? '', /token/);
+});

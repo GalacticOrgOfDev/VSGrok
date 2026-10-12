@@ -21,12 +21,23 @@ function toSignal(token: vscode.CancellationToken): AbortSignal {
 /** ~1M chars ≈ 250k tokens: half of grok-4.7's 500k context (docs.x.ai/developers/models). */
 const MAX_READ = 1_000_000;
 
+/** Extension-bundled docs Grok may read (fixed allow-list; no paths, so no traversal). */
+export const BUNDLED_DOCS = ['DEMO.md'] as const;
+let extUri: vscode.Uri | undefined;
+export function setExtensionUri(u: vscode.Uri) { extUri = u; }
+export async function readBundledDoc(name: string): Promise<string> {
+  if (!(BUNDLED_DOCS as readonly string[]).includes(name)) { return `Refused: unknown bundled doc "${name}". Available: ${BUNDLED_DOCS.join(', ')}.`; }
+  if (!extUri) { return 'Error: extension location unknown.'; }
+  return Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(extUri, 'docs', name))).toString('utf8');
+}
+
 /** Read-only tools: always offered in chat. */
 export const READ_TOOL_SPECS: ToolSpec[] = [
   { type: 'function', function: { name: 'get_problems', description: 'Current diagnostics from VS Code\'s Problems panel (compiler, linter, type checker), errors first. Filter by workspace-relative path (file or folder) and minimum severity. Use after edits to check for breakage.', parameters: { type: 'object', properties: { path: { type: 'string' }, severity: { type: 'string', enum: ['error', 'warning', 'info', 'hint'], description: 'Minimum severity (default warning)' }, max: { type: 'number' } } } } },
   { type: 'function', function: { name: 'find_relevant_files', description: 'Find the files most relevant to a task or question using the local workspace index (BM25 over file paths, symbol names and contents). Returns ranked paths with matching lines and symbol outlines. Use this first for "where is X handled", "how does Y work" or before editing an unfamiliar area, then read_file the top hits.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Natural-language or identifier query' }, max: { type: 'number', description: 'Max files (default 10, max 30)' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'get_workspace_overview', description: 'Overview of the open VS Code workspace: folder name(s), top-level tree, package.json / README summary, open editors, active file, git branch and status. Call this first when asked about "the workspace" or "this project".', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'read_file', description: 'Read a UTF-8 text file in the workspace.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative path' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'read_extension_doc', description: 'Read a document bundled with the VSGrok extension itself (read-only). DEMO.md holds the instructions for running the demo / building the example project.', parameters: { type: 'object', properties: { name: { type: 'string', enum: [...BUNDLED_DOCS] } }, required: ['name'] } } },
   { type: 'function', function: { name: 'list_files', description: 'List workspace files matching a glob (default **/*). Excludes node_modules.', parameters: { type: 'object', properties: { glob: { type: 'string' }, max: { type: 'number' } } } } },
   { type: 'function', function: { name: 'search_workspace', description: 'Search text (case-insensitive substring or regex) across workspace files. Returns path:line: text.', parameters: { type: 'object', properties: { query: { type: 'string' }, regex: { type: 'boolean' }, glob: { type: 'string' } }, required: ['query'] } } },
 ];
@@ -159,6 +170,7 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
         if (!chk.ok) { return `Refused: ${args.path} (${chk.reason}). VSGrok never reads these.`; }
         return await readText(u);
       }
+      case 'read_extension_doc': return await readBundledDoc(String(args.name ?? ''));
       case 'list_files': {
         const files = await vscode.workspace.findFiles(args.glob || '**/*', EXCLUDE, Math.min(Number(args.max) || 300, 2000), token);
         return files.map(f => vscode.workspace.asRelativePath(f)).sort().join('\n') || '(no files)';

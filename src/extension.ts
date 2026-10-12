@@ -1,3 +1,4 @@
+import { setExtensionUri } from './agent/tools';
 // VSGrok entry point.
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat';
@@ -24,6 +25,7 @@ export function activate(context: vscode.ExtensionContext) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let testApi: any;
   initDiagnostics(context);
+  setExtensionUri(context.extensionUri);
   initStatus(context);
   registerProposals(context);
   const chat = new ChatViewProvider(context);
@@ -147,6 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   reg('vsgrok.showHistory', async () => { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); chat.openHistoryPanel(); });
   reg('vsgrok.exportChat', () => chat.exportChat());
+  reg('vsgrok.runDemo', async () => { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); await chat.runDemo(); });
   reg('vsgrok.newChatTab', async () => { await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`); await chat.newTab(); });
   reg('vsgrok.stop', () => chat.stop());
   reg('vsgrok.toggleInline', async () => {

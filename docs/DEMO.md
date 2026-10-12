@@ -1,120 +1,60 @@
-# VSGrok demo script: a sample project from an empty folder
+# VSGrok demo: instructions for Grok
 
-This is a 4–6 minute recording that shows VSGrok building a small, visual project from nothing. It covers a multi-file plan card, running tests, fixing a failure, image input, the cost meter and X Search.
+You are Grok, running inside the VSGrok extension. The user asked you to run the demo (for example "hey grok, execute the demo", "run the demo" or "build the example project"). They are probably recording the screen. Build the example project below, and use every available tool in the order given so each one is visible on camera.
 
-**Project:** `palette`, a zero-dependency Node.js CLI that prints colour palettes as swatches in the terminal (`node palette.js "#3b82f6" --scheme triad`). It is small enough to build in a few turns, it looks good on camera, and pure functions make it easy to test with `node:test`.
+## Rules
 
----
+- **Narrate each step for the viewer.** Before each step, write one short line saying what you are about to do and which tool it shows, e.g. "**Step 2 · find_relevant_files**: checking for existing code to reuse." Keep it to one or two sentences.
+- **Every approval stays in place.** Write files only with `propose_plan` / `propose_edit`, run commands only with `run_tests` / `run_command`, and let the user approve each card. Never ask the user to turn approvals off, and never write files any other way. If the user denies a card, say so briefly and continue with the next step that doesn't depend on it.
+- **Skip a step whose tool is unavailable.** Say so in one line ("Web search is off in the header, so I'm skipping it"), then go on.
+- **Where to build:** call `get_workspace_overview` first. If the workspace is empty, build at the root. If it already has files, put the project in a `palette/` subfolder and say so. Never modify the existing files.
+- **Budget: the whole demo must cost under $1.** VSGrok enforces a hard stop at $1, or at 400k tokens when xAI doesn't report a cost.
+  - Keep every file tiny: about 60 lines for `src/color.js`, 40 for `palette.js`, 5 short tests, and a README of about 15 lines.
+  - Don't re-read files you just wrote. Read only small files, never `node_modules` or lock files. Pass `max` of 5 or less to `find_relevant_files` and `get_problems`.
+  - Use **exactly one web search and one X search**.
+  - Make at most about 15 tool calls in total, and keep the narration short.
+  - Watch the cost meter in the header. If spend nears **$0.80**, skip to step 10 and wrap up.
+- Stay in this order and finish all of it in one go. Don't stop to ask questions unless a card is denied.
 
-## 0. Setup (before you hit record)
+## The project: `palette`
 
-1. Install VSGrok 0.8.0 or later: **Extensions → … → Install from VSIX**, or let the self-update card do it.
-2. Set your xAI API key: **VSGrok: Set API Key**.
-3. Create an empty folder and open it: `mkdir palette-demo && code palette-demo`. Trust the workspace when asked; Agent edits need a trusted workspace for git and project rules.
-4. Open the Grok chat in the sidebar. Check:
-   - the model is **grok-4.7** (it accepts image input);
-   - **Agent** is on, **𝕏** is on, and **Web** is optional.
-5. Recording tips:
-   - **New chat** (header) so the cost meter starts at zero.
-   - Hide other notifications.
-   - Zoom to 125% (`Ctrl+=`) so the cards are readable, and **widen the sidebar to about 420 px**. Below about 340 px the header hides the cost meter that you need in §8.
-   - Have a terminal panel open.
-6. Optional: take a screenshot of a colour palette you like (any website or a Dribbble shot) for step 6.
+`palette` is a zero-dependency Node.js (18+) CLI that prints colour palettes as 24-bit ANSI swatches, with the hex code under each one:
 
----
+```
+node palette.js "#3b82f6" --scheme triad --count 3
+```
 
-## 1. Ask for the project (≈30 s)
-
-Type into the chat (Enter to send):
-
-> Create a tiny zero-dependency Node.js CLI called **palette** in this empty folder. `node palette.js <hex> [--scheme complementary|triad|analogous|mono] [--count N]` prints coloured swatches in the terminal using 24-bit ANSI colours, with the hex code under each swatch. Put the colour maths in `src/color.js` (hexToHsl, hslToHex, schemes), the CLI in `palette.js`, tests in `test/color.test.js` using `node:test`, a `package.json` with `"test": "node --test test/"`, and a short README. Propose everything as one plan.
-
-**What the viewer sees:**
-- Activity lines appear first: *✓ Read workspace overview* (empty folder), then maybe *✓ Listed files*.
-- Then the **plan card**: **"✦ Grok proposes a plan · 5 files"**, with the meta line **"5 new"**.
-  - Rows: `package.json`, `src/color.js`, `palette.js`, `test/color.test.js`, `README.md`, each with **＋**, a `+N −0` count and **View diff**.
-  - `package.json` carries a **⚠ changes scripts or CI that run commands** note. Point it out: VSGrok flags files that change what runs.
-  - Focus is on **Select all**, not on Approve.
-
-## 2. Review and approve (≈40 s)
-
-1. Click **View diff** on `src/color.js`. VS Code's diff editor opens with the proposed content. Scroll briefly, then close it.
-2. Untick `README.md` to show partial approval. The button changes to **Approve selected (4/5)**.
-3. Tick it again (**Approve all (5)**) and click it.
-
-**Expected:**
-- The card resolves to **✓ Approved**, and the files appear in the Explorer.
-- A **✓ Plan applied** card shows the five paths with **Undo plan** and **Re-run checks**.
-- (Undo plan works too, but save it for a separate short clip.)
-
-## 3. Run it (≈20 s)
-
-In the terminal: `node palette.js "#3b82f6" --scheme triad`. You should see three coloured blocks with their hex codes. This is the visual money shot, so hold it for a second.
-
-## 4. Run the tests through Grok (≈40 s)
-
-On the Plan applied card, click **Re-run checks**, or type:
-
-> Run the tests.
-
-**Expected:**
-- *Running the tests…* appears, followed by the **command approval card**: **⚡ Grok wants to run a command**, `npm test`.
-- Under it: **This runs:** `test: node --test test/`, and **From package.json scripts.test · repo-controlled**. Mention that you can see exactly what runs.
-- Click **Run**. Grok reports `exit code 0`, "All tests passed", and the number of tests.
-
-## 5. Break something and let Grok fix it (≈60 s)
-
-1. Open `src/color.js`, find `hslToHex`, and delete the `.padStart(2, '0')` call so single-digit channels lose their leading zero (`#3b82f6`-style codes turn into 5-character strings). Save. Run `node palette.js "#0a0a0a"` once to show the broken hex code under the swatch.
-2. Ask:
-
-   > Run the tests again and fix whatever fails.
-
-**Expected:**
-- Approve the `npm test` card. The output shows a failure.
-- Grok's reply lists the failure as **`test/color.test.js:NN`** with the assertion message. VSGrok parses failures into file:line.
-- Grok proposes the fix as an **edit card** (one file, "✦ Grok wants to edit a file") or a one-row plan card. Click **View diff** to show the one-line change, then **Approve**.
-- Grok re-runs the tests (approve again) and gets **all passing**.
-- A **🧪 Re-run checks** button appears under the reply if Grok edited without re-running.
-
-## 6. Show it a picture (≈40 s)
-
-1. Paste the palette screenshot into the chat input (`Ctrl+V`). Pasted screenshots work directly; dragging an image from the file manager needs **Shift** held while you drop. A thumbnail appears in the image tray above the input. Click it to preview, and note the **×** that removes it.
-2. Type:
-
-   > Add a `--from-image` example to the README: describe the palette in this screenshot as hex codes and show the command that reproduces it.
-
-**Expected:**
-- The message shows the thumbnail. Grok reads the image and answers with the hex codes.
-- Grok proposes a README edit; approve it.
-- If you had switched to a model without image input, an in-chat note would offer **Switch to grok-4.7 and resend** (or **Send without images**). Your text and images are kept.
-
-## 7. X Search question (≈30 s)
-
-With **𝕏** on in the header, type:
-
-> What are people on X saying this week about terminal colour palettes or truecolor support? Give me three posts with links.
-
-**Expected:**
-- An *X search* activity line appears, followed by the answer with **citations listed as links** under the reply.
-- Note in voice-over that X Search runs on xAI's servers and is billed by xAI per call.
-
-## 8. Wrap up on the cost meter (≈15 s)
-
-Point at the header meter, e.g. **"48k tok · $0.09"**. Click it to open the breakdown: turns, input (cached), output (reasoning), and the cost **as reported by xAI**. The same figures are in the ⚙ settings panel. Click **New chat** to show that it resets.
-
----
-
-## Troubleshooting while recording
-
-| Symptom | Fix |
+| File | Contents |
 |---|---|
-| No plan card, just code blocks | Agent is off: toggle **Agent** in the header and ask again ("propose it as a plan"). |
-| `npm test` card shows a different command | You have `vsgrok.testCommand` set; clear it for the demo. |
-| "can't read images" note | Click **Switch to grok-4.7 and resend** on the note. |
-| Cost meter missing from the header | The sidebar is too narrow; widen it, or open ⚙ to see "This chat". |
-| Cost meter shows tokens but no `$` | The API didn't report a cost for those turns; VSGrok never estimates prices. |
-| Deletes fail on Linux without a desktop trash | Set `files.enableTrash: false` (only matters if you show Undo of a delete). |
+| `src/color.js` | `hexToHsl(hex)`, `hslToHex({h,s,l})` (lowercase `#rrggbb`, zero-padded), and `scheme(hex, name, count)` for `complementary`, `triad`, `analogous` and `mono`. Pure functions, CommonJS exports. |
+| `palette.js` | Argument parsing, validation with friendly errors, and swatch rendering (`\x1b[48;2;r;g;bm`). |
+| `test/color.test.js` | `node:test` + `node:assert/strict` tests: round-trip, padding (`#0a0a0a`), triad hue offsets, and invalid input throwing. |
+| `package.json` | `"name": "palette"`, `"scripts": { "test": "node --test test/" }`, no dependencies. |
+| `README.md` | Usage, the schemes, and a "Did you know?" line with a current fact from step 3. |
 
-## Not included
+## Steps
 
-There is no **VSGrok: New Sample Project** command in 0.8.0. It was optional, and typing the prompt on camera is the better demo anyway. It would also add a code path that writes files without the plan card.
+1. **Workspace overview** (`get_workspace_overview`). Report what is there and decide where to build (root or `palette/`).
+2. **Find relevant files** (`find_relevant_files`, query "colour palette CLI hex hsl"). In an empty folder, say there's nothing to reuse. Otherwise mention the top hits and confirm that you won't touch them.
+3. **Web and X search** (server tools; use them if they're on in the header).
+   - Web search: one current fact for the README, such as the current Node.js LTS version or which popular terminals support 24-bit truecolour. Cite it.
+   - X search: what people said recently about terminal truecolour or colour palettes. Quote one or two posts with links.
+4. **Multi-file plan** (`propose_plan`). Propose all five files as one plan with a one-line summary. In `test/color.test.js`, include **one deliberately wrong test** that will fail, and tell the viewer about it: for example, assert that the complementary colour of `#ff0000` is `#00ff00` (it is really `#00ffff`). Wait for approval.
+5. **Run the tests** (`run_tests`). After approval, show the result. Exactly the one intentional test should fail. Point out the file:line that VSGrok parsed.
+6. **Check problems** (`get_problems`, path set to the project folder). Report what's there, or that it's clean.
+7. **Fix with an edit** (`propose_edit`). Correct the wrong expectation in `test/color.test.js` to `#00ffff`, with a short reason. Wait for approval, then **run `run_tests` again** and show that everything passes.
+8. **Image (only if the user attached one to the chat).** Read the palette in the image, list its hex codes, and use `propose_edit` to add a "From a screenshot" example to the README with the command that reproduces it. With no image, say "No image attached, skipping the image step" and move on.
+9. **Git help.** If the folder isn't a git repository yet, offer `run_command` with `git init && git add -A` (needs approval). Then write a Conventional Commits message for the change, a subject line and 2–4 bullet points, in a code block. Tell the viewer they can also generate one from the **✦ Generate Commit Message** button in Source Control. Do not commit unless the user asks.
+10. **Summary.** List the files created, the tests (count, and the one that failed and was fixed), the searches run, and the tools used in order. Then point the viewer to the **cost meter** in the chat header (click it for the breakdown, as reported by xAI). End with the command to try: `node palette.js "#3b82f6" --scheme triad`.
+
+---
+
+## For the human: recording tips
+
+- Open an empty folder and trust it. Click **New chat** so the cost meter starts at zero. Turn on **Agent**, **𝕏** and **Web** in the header, and use an image-capable model.
+- Zoom to 125% and widen the sidebar to about 420 px so the cost meter stays visible. Keep a terminal panel open.
+- Optional: paste a palette screenshot into the chat before sending to include the image step.
+- Start with the **VSGrok: Run Demo** command, or type "execute the demo".
+- The demo stops itself at $1 (or 400k tokens when xAI reports no cost). A typical run costs well under that.
+- Approve the plan with **View diff** first; it reads well on camera. The failing test in step 5 is intentional.
+- After the summary, run `node palette.js "#3b82f6" --scheme triad` in the terminal for the money shot.

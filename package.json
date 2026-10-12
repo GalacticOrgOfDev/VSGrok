@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -164,6 +164,11 @@
       {
         "command": "vsgrok.exportChat",
         "title": "Export Chat to Markdown",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.runDemo",
+        "title": "Run Demo",
         "category": "VSGrok"
       },
       {
