@@ -2,7 +2,8 @@
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
 import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL } from './config';
-import { TOOL_SPECS, executeTool } from './agent/tools';
+import { READ_TOOL_SPECS, TOOL_SPECS, READ_ONLY_TOOL_NAMES, executeTool } from './agent/tools';
+import { runToolLoop } from './agent/loop';
 import { proposeEdit, proposeRangeEdit } from './proposals';
 import { setBusy } from './status';
 import { listModels, ModelInfo } from './xai/models';
@@ -11,15 +12,22 @@ const MAX_FILE_CHARS = 100_000;
 const MAX_HISTORY = 40;
 
 export const SYSTEM_PROMPT =
-  'You are Grok, built by xAI, running inside the VS Code extension VSGrok as a coding assistant. ' +
+  'You are Grok, built by xAI, running inside VS Code through the VSGrok extension as a coding agent. ' +
+  'You are connected to the user\'s open workspace through tools: get_workspace_overview, list_files, read_file and search_workspace are always available and run instantly without asking the user. ' +
+  'When a question involves the user\'s code, project, files or "the workspace", call these tools in this same turn and answer from what they return. ' +
+  'Never announce an action ("I\'ll take a look", "Let me check") without making the tool call in the same response, and never end your turn promising to do something later. ' +
+  'Either call a tool now or give your final answer. Keep going, calling tools as many times as needed, until you can answer. ' +
   'Be accurate and concise. Always use fenced code blocks with a language tag. ' +
   'When you give a full replacement for a file, put `path=<workspace-relative path>` after the language in the fence, e.g. ```ts path=src/a.ts. ' +
   'Never claim to have changed files unless a tool result says the edit was applied.';
 
 const AGENT_PROMPT =
-  ' Agent mode is on: you can call tools to read files, list and search the workspace, propose edits ' +
-  '(the user reviews a diff and must accept) and run terminal commands (the user must confirm). ' +
+  ' Agent mode is on: you can also call propose_edit (the user reviews a diff and must Accept) and run_command (the user must confirm). ' +
   'Inspect before editing. Prefer small, correct changes. Summarise what you did at the end.';
+
+const NO_AGENT_PROMPT =
+  ' Agent mode is off: you cannot edit files or run commands. Show changes as code blocks with path=… so the user can click Apply, ' +
+  'or tell them to switch on Agent in the chat header.';
 
 interface ContextItem {
   id: string;
@@ -45,7 +53,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private agentMode = false;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
-    this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? false;
+    this.agentMode = cfg().get<boolean>('agent.enabledByDefault') ?? true;
     ctx.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.pushEditorState()),
       vscode.window.onDidChangeTextEditorSelection(() => this.pushEditorState()),
@@ -74,7 +82,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div id="header"><div class="header-left"><img class="logo" src="${u('grok-icon.png')}" alt="" width="20" height="20"><span class="brand">Grok</span><span class="brand-sub">for VS Code</span></div>
 <div class="header-right">
 <select id="model" class="h-select" aria-label="Grok model" title="Grok model"></select>
-<label class="agent-toggle" title="Agent mode: Grok may read/search files, propose diffs and request commands"><input type="checkbox" id="agent"> Agent</label>
+<label class="agent-toggle" title="Agent: let Grok propose edits (you Accept each diff) and request terminal commands (you confirm). Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
 <button id="settings-btn" class="h-btn icon" aria-label="Settings" aria-expanded="false">⚙</button>
 <button id="clear-btn" class="h-btn" aria-label="New chat">New</button></div></div>
 <section id="welcome" hidden aria-labelledby="welcome-title"><img class="welcome-logo" src="${u('grok-icon.png')}" alt="" width="56" height="56">
@@ -290,32 +298,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'streamStart', id: aid });
     setBusy(true);
     const t0 = Date.now();
-    let tokens = 0;
     try {
-      const sys: ChatMessage = { role: 'system', content: SYSTEM_PROMPT + (this.agentMode ? AGENT_PROMPT : '') };
+      const agent = this.agentMode;
+      const sys: ChatMessage = { role: 'system', content: SYSTEM_PROMPT + (agent ? AGENT_PROMPT : NO_AGENT_PROMPT) };
       const maxSteps = clampNum(cfg().get('agent.maxSteps'), 1, 50, 15);
-      for (let step = 0; ; step++) {
-        const opts = await requestOptions(this.ctx, {
-          signal: this.abort.signal,
-          tools: this.agentMode ? TOOL_SPECS : undefined,
+      const cts = this.cts;
+      const signal = this.abort.signal;
+      let tid = 0;
+      const ids = new Map<string, string>();
+      const r = await runToolLoop({
+        system: sys,
+        history: this.history,
+        tools: agent ? TOOL_SPECS : READ_TOOL_SPECS,
+        maxSteps,
+        isCancelled: () => cts.token.isCancellationRequested || signal.aborted,
+        request: async (msgs, tools) => streamChat(msgs, await requestOptions(this.ctx, {
+          signal,
+          tools: tools.length ? tools : undefined,
           onContent: (delta) => this.post({ type: 'streamChunk', id: aid, delta }),
-        });
-        const res = await streamChat([sys, ...this.history], opts);
-        tokens += res.usage?.completion_tokens ?? 0;
-        this.history.push({ role: 'assistant', content: res.content || null, ...(res.toolCalls.length ? { tool_calls: res.toolCalls } : {}) });
-        if (!this.agentMode || !res.toolCalls.length) { break; }
-        if (step + 1 >= maxSteps) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Stopped after ${maxSteps} agent steps._` }); break; }
-        for (const call of res.toolCalls) {
-          if (this.cts.token.isCancellationRequested) { throw new GrokApiError('Request cancelled.', 'aborted'); }
-          let args: unknown = {};
-          try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* keep {} */ }
-          this.post({ type: 'toolEvent', id: aid, text: `🔧 ${call.function.name} ${summarizeArgs(args)}` });
-          const out = await executeTool(call.function.name, args, this.cts.token);
-          this.history.push({ role: 'tool', tool_call_id: call.id, content: out });
-        }
-        this.post({ type: 'streamChunk', id: aid, delta: '\n\n' });
-      }
-      this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: tokens || undefined, model: cfg().get('model') } });
+        })),
+        execute: (name, args) => {
+          if (!agent && !READ_ONLY_TOOL_NAMES.has(name)) {
+            return Promise.resolve(`Tool ${name} is not available: Agent mode is off. Ask the user to enable Agent in the chat header, or show the change as a code block.`);
+          }
+          return executeTool(name, args, cts.token);
+        },
+        onToolStart: (call, args) => {
+          const t = `t${++tid}`; ids.set(call.id, t);
+          this.post({ type: 'toolEvent', id: aid, toolId: t, state: 'running', label: toolLabel(call.function.name, args) });
+        },
+        onToolEnd: (call, args, out) => {
+          const failed = /^(Error:|Unknown tool|Tool .* is not available)/.test(out);
+          this.post({ type: 'toolEvent', id: aid, toolId: ids.get(call.id), state: failed ? 'error' : 'done', label: toolLabel(call.function.name, args, true), detail: out.length > 4000 ? out.slice(0, 4000) + '\n…' : out });
+        },
+        onStepEnd: (_s, res) => { if (res.toolCalls.length && res.content) { this.post({ type: 'streamChunk', id: aid, delta: '\n\n' }); } },
+      });
+      if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (vsgrok.agent.maxSteps)._` }); }
+      this.post({ type: 'streamDone', id: aid, meta: { latencyMs: Date.now() - t0, completionTokens: r.completionTokens || undefined, model: cfg().get('model') } });
     } catch (e) {
       const err = e as GrokApiError;
       if (err.kind === 'aborted') { this.post({ type: 'streamStopped', id: aid }); }
@@ -351,9 +370,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
-function summarizeArgs(a: unknown): string {
-  if (!a || typeof a !== 'object') { return ''; }
-  const o = a as Record<string, unknown>;
-  const s = o.path ?? o.command ?? o.query ?? o.glob ?? '';
-  return String(s).slice(0, 120);
+/** Human label for a tool call, e.g. "Read src/foo.ts" / "Reading src/foo.ts…". */
+export function toolLabel(name: string, a: unknown, done = false): string {
+  const o = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
+  const s = (v: unknown) => String(v ?? '').slice(0, 120);
+  switch (name) {
+    case 'get_workspace_overview': return done ? 'Looked at the workspace' : 'Looking at the workspace…';
+    case 'read_file': return `${done ? 'Read' : 'Reading'} ${s(o.path)}`;
+    case 'list_files': return `${done ? 'Listed' : 'Listing'} files ${o.glob ? s(o.glob) : ''}`.trim();
+    case 'search_workspace': return `${done ? 'Searched' : 'Searching'} for "${s(o.query)}"`;
+    case 'propose_edit': return `${done ? 'Proposed edit to' : 'Proposing edit to'} ${s(o.path)}`;
+    case 'run_command': return `${done ? 'Ran' : 'Running'} \`${s(o.command)}\``;
+    default: return `${name}`;
+  }
 }

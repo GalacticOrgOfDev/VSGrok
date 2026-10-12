@@ -257,7 +257,22 @@
       case 'userMessage': addUser(m.text, m.chips); break;
       case 'streamStart': startTurn(m.id); break;
       case 'streamChunk': { const t = turns.get(m.id); if (t && t.state === 'streaming') { t.raw += m.delta; scheduleRender(t); } break; }
-      case 'toolEvent': { const t = turns.get(m.id); if (t) { const d = document.createElement('div'); d.className = 'tool-event'; d.textContent = m.text; t.tools.appendChild(d); } break; }
+      case 'toolEvent': {
+        const t = turns.get(m.id); if (!t) { break; }
+        let d = m.toolId ? t.tools.querySelector('[data-tool-id="' + String(m.toolId).replace(/[^\w-]/g, '') + '"]') : null;
+        if (!d) {
+          d = document.createElement('details'); d.className = 'tool-event'; if (m.toolId) { d.dataset.toolId = String(m.toolId); }
+          const sm = document.createElement('summary'); d.appendChild(sm); t.tools.appendChild(d);
+        }
+        d.dataset.state = m.state || 'done';
+        const sm = d.querySelector('summary');
+        sm.textContent = (m.state === 'running' ? '◌ ' : m.state === 'error' ? '✕ ' : '✓ ') + String(m.label || m.text || '');
+        if (typeof m.detail === 'string') {
+          let pre = d.querySelector('pre'); if (!pre) { pre = document.createElement('pre'); d.appendChild(pre); }
+          pre.textContent = m.detail;
+        }
+        break;
+      }
       case 'streamDone': finishTurn(turns.get(m.id), 'done', { meta: m.meta }); break;
       case 'streamStopped': finishTurn(turns.get(m.id), 'stopped'); break;
       case 'streamError': finishTurn(turns.get(m.id), 'error', { msg: m.msg, kind: m.kind }); break;

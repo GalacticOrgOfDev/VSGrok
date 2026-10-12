@@ -7,8 +7,8 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Streaming chat sidebar** — markdown rendered as it streams, Stop button (or `Esc`), regenerate, copy, per-reply model / token / latency footer.
 - **Code-block actions** — every code block has **Copy**, **Insert** (at cursor / replace selection) and **Apply as diff** (opens a diff of the target file vs. Grok's proposal; nothing is written until you click **Accept**). A fence like ` ```ts path=src/a.ts ` targets that file.
 - **Context chips** — attach the current file, the current selection (shown automatically, click to pin), workspace files via quick pick, or files dragged from the Explorer. `@file` and `@workspace` in a message also still work. Large files are truncated at 100k characters.
-- **Agent mode** (toggle in the header, or *VSGrok: Start Agent Task*) — Grok can call tools:
-  - `read_file`, `list_files`, `search_workspace` (read-only, run directly, restricted to the workspace),
+- **Workspace tools in every chat** — Grok can always call `get_workspace_overview` (folder, top-level tree, package.json/README summary, open editors, git branch/status), `read_file`, `list_files` and `search_workspace` (read-only, run directly, restricted to the workspace). It keeps calling tools until it has an answer (cap: `vsgrok.agent.maxSteps`), and each call shows in the chat as a collapsible line (e.g. *✓ Read src/a.ts*) with its output.
+- **Agent** (header toggle, on by default, or *VSGrok: Start Agent Task*) adds the write tools:
   - `propose_edit` — always shown as a diff and applied only if you accept,
   - `run_command` — runs in the workspace root only after you confirm a modal prompt.
 - **Inline ghost-text completions** — debounced (default 275 ms), cancelled when you keep typing, toggle with *VSGrok: Toggle Inline Completions* or `vsgrok.inlineCompletions.enabled`.
@@ -32,7 +32,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 | `vsgrok.baseUrl` | `https://api.x.ai/v1` | OpenAI-compatible endpoint |
 | `vsgrok.temperature` / `vsgrok.maxTokens` | `0.3` / `8192` | |
 | `vsgrok.requestTimeoutSeconds` | `120` | Idle timeout |
-| `vsgrok.agent.enabledByDefault` / `vsgrok.agent.maxSteps` | `false` / `15` | |
+| `vsgrok.agent.enabledByDefault` / `vsgrok.agent.maxSteps` | `true` / `15` | Read-only workspace tools are always on; Agent adds edits (diff + Accept) and commands (confirm) |
 | `vsgrok.inlineCompletions.*` | enabled, model = chat model, 275 ms, 128 tokens | |
 
 ## Privacy

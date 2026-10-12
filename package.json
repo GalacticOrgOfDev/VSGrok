@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -204,8 +204,8 @@
         },
         "vsgrok.agent.enabledByDefault": {
           "type": "boolean",
-          "default": false,
-          "description": "Start chats in agent mode (tool use)."
+          "default": true,
+          "description": "Start chats with Agent on: Grok may also propose edits (diff + Accept) and request terminal commands (confirm). Read-only workspace tools are always available."
         },
         "vsgrok.agent.maxSteps": {
           "type": "number",
