@@ -20,9 +20,31 @@ async function main() {
   });
   // Mock xAI API for image input + cost meter tests. Records request bodies at /xai/requests.
   const xaiRequests: unknown[] = [];
+  const chatRequests: unknown[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chatReplies: { text: string; toolCalls?: any[] }[] = [];
   function mockXai(req: http.IncomingMessage, res: http.ServerResponse) {
     const url = req.url!.replace(/^\/xai\/v1/, '');
     if (req.url === '/xai/requests') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(xaiRequests)); return; }
+    // Chat Completions mock: replies are queued by tests via POST /xai/chatReply {text}; requests recorded at /xai/chatRequests.
+    if (req.url === '/xai/chatRequests') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(chatRequests)); return; }
+    if (req.url === '/xai/chatReply' && req.method === 'POST') {
+      let b = ''; req.on('data', d => (b += d)); req.on('end', () => { try { chatReplies.push(JSON.parse(b)); } catch { /* ignore */ } res.writeHead(204); res.end(); });
+      return;
+    }
+    if (url === '/chat/completions' && req.method === 'POST') {
+      let b = ''; req.on('data', d => (b += d)); req.on('end', () => {
+        try { chatRequests.push(JSON.parse(b)); } catch { chatRequests.push(b); }
+        const r = chatReplies.shift() ?? { text: 'mock reply' };
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        const parts = r.text.match(/[\s\S]{1,12}/g) ?? [''];
+        for (const p of parts) { res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: p } }] })}\n\n`); }
+        if (r.toolCalls) { res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: r.toolCalls } }] })}\n\n`); }
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: r.toolCalls ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 10 } })}\n\n`);
+        res.write('data: [DONE]\n\n'); res.end();
+      });
+      return;
+    }
     if (url === '/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-vision', created: 2 }, { id: 'mock-text', created: 1 }] })); return; }
     if (url === '/language-models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ models: [{ id: 'mock-vision', input_modalities: ['text', 'image'] }, { id: 'mock-text', input_modalities: ['text'] }] })); return; }
     if (url === '/responses' && req.method === 'POST') {

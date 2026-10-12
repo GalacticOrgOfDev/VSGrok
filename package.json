@@ -2,7 +2,7 @@
   "name": "vsgrok",
   "displayName": "VSGrok",
   "description": "AI coding assistant for VS Code powered by xAI Grok: streaming chat, inline completions, agent mode with reviewed edits, commit messages and quick fixes.",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "icon": "media/Grok-Icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -128,6 +128,28 @@
         "command": "vsgrok.refactor",
         "title": "Refactor…",
         "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.inlineEdit",
+        "title": "Inline Edit with Grok",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.inlineEdit.submit",
+        "title": "Send to Grok",
+        "category": "VSGrok"
+      },
+      {
+        "command": "vsgrok.inlineEdit.accept",
+        "title": "Accept Inline Edit",
+        "category": "VSGrok",
+        "icon": "$(check)"
+      },
+      {
+        "command": "vsgrok.inlineEdit.reject",
+        "title": "Reject Inline Edit",
+        "category": "VSGrok",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -171,9 +193,30 @@
         {
           "command": "vsgrok.refactor",
           "when": "editorIsOpen"
+        },
+        {
+          "command": "vsgrok.inlineEdit",
+          "when": "editorIsOpen && !editorReadonly"
+        },
+        {
+          "command": "vsgrok.inlineEdit.submit",
+          "when": "false"
+        },
+        {
+          "command": "vsgrok.inlineEdit.accept",
+          "when": "vsgrok.inlineEditReady"
+        },
+        {
+          "command": "vsgrok.inlineEdit.reject",
+          "when": "vsgrok.inlineEditActive"
         }
       ],
       "vsgrok.editorSubmenu": [
+        {
+          "command": "vsgrok.inlineEdit",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_inline@1"
+        },
         {
           "command": "vsgrok.explainThis",
           "when": "editorTextFocus",
@@ -198,6 +241,25 @@
           "command": "vsgrok.addComments",
           "when": "editorTextFocus && !editorReadonly",
           "group": "1_grok@5"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "vsgrok.inlineEdit.submit",
+          "group": "inline@1",
+          "when": "commentController == vsgrok-inline"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "vsgrok.inlineEdit.accept",
+          "group": "inline@1",
+          "when": "commentController == vsgrok-inline && vsgrok.inlineEditReady"
+        },
+        {
+          "command": "vsgrok.inlineEdit.reject",
+          "group": "inline@2",
+          "when": "commentController == vsgrok-inline"
         }
       ]
     },
@@ -230,6 +292,28 @@
         "command": "vsgrok.query",
         "key": "ctrl+alt+g",
         "mac": "cmd+alt+g"
+      },
+      {
+        "command": "vsgrok.inlineEdit",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "editorTextFocus && !editorReadonly && config.vsgrok.inlineEdit.enabled && !inlineChatHasProvider && !vsgrok.inlineEditActive && !suggestWidgetVisible"
+      },
+      {
+        "command": "vsgrok.inlineEdit.accept",
+        "key": "tab",
+        "when": "vsgrok.inlineEditReady && editorTextFocus && !suggestWidgetVisible && !inlineSuggestionVisible && !inSnippetMode"
+      },
+      {
+        "command": "vsgrok.inlineEdit.accept",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "vsgrok.inlineEditReady && (editorTextFocus || commentEditorFocused)"
+      },
+      {
+        "command": "vsgrok.inlineEdit.reject",
+        "key": "escape",
+        "when": "vsgrok.inlineEditActive && (editorTextFocus || commentEditorFocused) && !suggestWidgetVisible"
       }
     ],
     "configuration": {
@@ -412,6 +496,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "After the agent edits files, show a **Re-run checks** button under its reply (not shown when the Plan applied card already offers it)."
+        },
+        "vsgrok.inlineEdit.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Grok inline edit (Ctrl+I / Cmd+I in the editor). Ctrl+I yields to another inline-chat provider (e.g. Copilot) when one is installed; rebind vsgrok.inlineEdit to use it then."
         }
       }
     },

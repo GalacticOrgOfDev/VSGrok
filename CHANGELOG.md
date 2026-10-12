@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 — 2026-10-12
+**Inline edit**
+- Select code, or put the cursor on a line, and press **Ctrl+I** (**Cmd+I** on macOS). An inline input opens at the cursor (VS Code's comment widget). Type an instruction and press Enter.
+- Grok streams the replacement right below the original block as an inline diff: the old lines are tinted red, the new ones green, with overview-ruler marks.
+- **Tab** or **Ctrl/Cmd+Enter** accepts (the old block is removed) and **Esc** rejects (the original is restored exactly). Accept and Reject are also buttons on the widget. Reply in the same widget to refine; earlier instructions and results go along as history.
+- Typing in the file while a proposal is shown cancels it and removes the proposal.
+- Keybindings: `Ctrl+I` only applies in a writable editor with text focus, when no suggest widget is open and **no other inline-chat provider is installed** (`!inlineChatHasProvider`, so Copilot keeps its `Ctrl+I`). Tab only accepts while a result is ready and no suggestion or ghost text is visible. Also in the Grok right-click submenu and the Command Palette.
+- Same file rules as attachments: workspace files only, never secret-looking paths or symlinks onto them. The file content is framed as untrusted, and at most 20,000 characters can be rewritten inline.
+- New setting `vsgrok.inlineEdit.enabled` (default on).
+
 ## 0.8.1 — 2026-10-12
 **Code and security review (JGrok)**
 - **Image budget (high).** Old images are no longer resent on every turn. Only the most recent image message is kept for follow-ups; older image parts become a short "[image N from an earlier message omitted]" placeholder (and all earlier ones are dropped when a new image is attached). The extension now enforces 4 MiB per image and 16 MiB of images per message, not just the webview.

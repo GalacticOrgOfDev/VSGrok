@@ -8,6 +8,7 @@ import { executeTool } from './agent/tools';
 import { runEditorAction } from './editorActions';
 import { virtualDiffCount } from './proposals';
 import { GrokInlineProvider } from './inline';
+import { registerInlineEdit } from './inlineEdit';
 import { registerProposals } from './proposals';
 import { initStatus, refreshStatus } from './status';
 import { SECRET_KEY, DEFAULT_MODEL, cfg } from './config';
@@ -46,9 +47,10 @@ export function activate(context: vscode.ExtensionContext) {
   reg('vsgrok.writeTestsForThis', () => runEditorAction(chat, 'tests'));
   reg('vsgrok.fixProblemsHere', () => runEditorAction(chat, 'fix'));
   reg('vsgrok.refactor', (instruction?: string) => runEditorAction(chat, 'refactor', typeof instruction === 'string' ? instruction : undefined));
+  const inlineEdit = registerInlineEdit(context);
   const updater = new Updater(context, chat);
   if ((__VSGROK_TEST__ && process.env.VSGROK_TEST === '1')) {
-    testApi = { chat, updater, workspaceIndex };
+    testApi = { chat, updater, workspaceIndex, inlineEdit };
     reg('vsgrok.__testVirtualDiffCount', () => virtualDiffCount());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     reg('vsgrok.__testRunTool', async (name: string, args: any) => {

@@ -17,6 +17,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 - **Approvals in the chat** — every permission request (commands, agent edits, *Apply as diff*, *Fix with Grok*) appears as an inline card in the chat with **Approve/Run** and **Deny** (edits also have **View diff**, which opens VS Code's diff editor; the decision is still made in the chat). No pop-ups or notifications. Stopping, starting a new chat or closing the panel counts as Deny.
 - **Multi-file plans** — the agent bundles create/modify/delete/rename edits into one plan card with per-file diffs and checkboxes. Approve all or a subset; it is applied atomically, and one **Undo plan** click reverts it.
 - **Problems and tests** — `get_problems` reads VS Code diagnostics, and problems in the active and attached files ride along with your message (toggle with the ⚠ chip). `run_tests` detects and runs your test command (or `vsgrok.testCommand`) through the approval card and reports failures as file:line. After edits the chat offers **Re-run checks**.
+- **Inline edit (Ctrl+I / Cmd+I)** — select code (or just put the cursor on a line), press `Ctrl+I`, type what to change in the inline box that opens at the cursor, and Grok streams a replacement right below the original (old lines red, new lines green). **Tab** or **Ctrl+Enter** accepts, **Esc** rejects, and replying in the same box refines the result. Secret-looking files and files outside the workspace are refused. If another inline-chat extension (e.g. Copilot) owns `Ctrl+I`, run *VSGrok: Inline Edit with Grok* or rebind `vsgrok.inlineEdit`.
 - **Right-click actions** — *Explain This*, *Write Tests for This*, *Fix Problems Here* and *Refactor…* on the selection or the enclosing symbol.
 - **Images in chat** — paste a screenshot, drop image files or click 🖼 to attach them (thumbnails before sending). They are downscaled locally and sent as `input_image` to vision-capable models; if the selected model can't read images, the chat offers to switch.
 - **Cost meter** — running tokens and cost for the current chat in the header (cost only when xAI reports it), with a breakdown tooltip.
@@ -56,6 +57,7 @@ An AI coding assistant for VS Code that talks only to the **xAI Grok API**. Brin
 | `vsgrok.temperature` / `vsgrok.maxTokens` | `0.3` / `8192` | |
 | `vsgrok.requestTimeoutSeconds` | `120` | Idle timeout |
 | `vsgrok.agent.enabledByDefault` / `vsgrok.agent.maxSteps` | `true` / `15` | Read-only workspace tools are always on; Agent adds edits (diff + Accept) and commands (confirm) |
+| `vsgrok.inlineEdit.enabled` | `true` | Inline edit with `Ctrl+I` / `Cmd+I` |
 | `vsgrok.inlineCompletions.*` | enabled, model = chat model, 275 ms, 128 tokens | |
 
 ## Privacy

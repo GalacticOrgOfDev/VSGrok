@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Api = { chat: any; updater: any; workspaceIndex: any };
+type Api = { chat: any; updater: any; workspaceIndex: any; [k: string]: any };
 let api: Api;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function until<T>(fn: () => T | undefined | false, ms = 20000): Promise<T> {
@@ -295,7 +295,7 @@ suite('VSGrok in VS Code', () => {
     assert.deepStrictEqual(menus['editor/context'].map((m: { submenu?: string }) => m.submenu), ['vsgrok.editorSubmenu']);
     assert.strictEqual(ext.packageJSON.contributes.submenus[0].label, 'Grok');
     const menu = (menus['vsgrok.editorSubmenu'] as { command: string }[]).map(m => m.command);
-    assert.deepStrictEqual(menu, ['vsgrok.explainThis', 'vsgrok.writeTestsForThis', 'vsgrok.fixProblemsHere', 'vsgrok.refactor', 'vsgrok.addComments']);
+    assert.deepStrictEqual(menu, ['vsgrok.inlineEdit', 'vsgrok.explainThis', 'vsgrok.writeTestsForThis', 'vsgrok.fixProblemsHere', 'vsgrok.refactor', 'vsgrok.addComments']);
 
     ed.selection = new vscode.Selection(3, 0, 3, 0); // no selection: enclosing class symbol or fallback
     u0 = posts('userMessage').length;
@@ -534,5 +534,84 @@ suite('VSGrok in VS Code', () => {
       await c.update('baseUrl', undefined, vscode.ConfigurationTarget.Global);
       await c.update('model', undefined, vscode.ConfigurationTarget.Global);
     }
+  });
+
+  // ---------- 0.9.0: inline edit ----------
+  async function withMock<T>(model: string, fn: (xai: string) => Promise<T>): Promise<T> {
+    const xai = process.env.VSGROK_TEST_XAI!;
+    const c = vscode.workspace.getConfiguration('vsgrok');
+    await c.update('baseUrl', xai + '/v1', vscode.ConfigurationTarget.Global);
+    await c.update('model', model, vscode.ConfigurationTarget.Global);
+    await api.chat['ctx'].secrets.store('vsgrok.apiKey', 'test-key');
+    try { return await fn(xai); } finally {
+      await api.chat['ctx'].secrets.delete('vsgrok.apiKey');
+      await c.update('baseUrl', undefined, vscode.ConfigurationTarget.Global);
+      await c.update('model', undefined, vscode.ConfigurationTarget.Global);
+    }
+  }
+  const reply = (xai: string, text: string, toolCalls?: unknown[]) => fetch(xai + '/chatReply', { method: 'POST', body: JSON.stringify({ text, toolCalls }) });
+
+  test('inline edit: streams a replacement below the region, accept keeps it, reject restores, refine resends history, secrets refused', async () => {
+    await withMock('mock-text', async (xai) => {
+      const root = vscode.workspace.workspaceFolders![0].uri;
+      const f = vscode.Uri.joinPath(root, 'inline-target.ts');
+      await vscode.workspace.fs.writeFile(f, Buffer.from('const a = 1;\nfunction add(x, y) {\n  return x + y;\n}\nconst z = 3;\n'));
+      const doc = await vscode.workspace.openTextDocument(f);
+      const ed = await vscode.window.showTextDocument(doc);
+      ed.selection = new vscode.Selection(1, 0, 4, 0);
+      const ie = api.inlineEdit;
+      const c0 = ((await (await fetch(xai + '/chatRequests')).json()) as unknown[]).length;
+      await reply(xai, '```ts\nfunction add(x: number, y: number): number {\n  return x + y;\n}\n```');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit', 'add types');
+      await until(() => ie.state?.ready);
+      // Inline diff: old block still there, new block right below it.
+      assert.strictEqual(doc.getText(), 'const a = 1;\nfunction add(x, y) {\n  return x + y;\n}\nfunction add(x: number, y: number): number {\n  return x + y;\n}\nconst z = 3;\n');
+      assert.match(ie.lastStatus, /\+1 −1/);
+      const reqs = (await (await fetch(xai + '/chatRequests')).json()) as { messages: { role: string; content: string }[] }[];
+      const sent = reqs[c0].messages.at(-1)!.content;
+      assert.match(sent, /<REGION>function add\(x, y\) \{\n  return x \+ y;\n\}\n<\/REGION>const z/); assert.match(sent, /Instruction: add types/);
+      // Refine: history goes along; the new result replaces the shown block.
+      await reply(xai, 'function add(x: number, y: number) {\n  return x + y; // sum\n}\n');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit.submit', 'add a comment');
+      await until(() => ie.state?.ready && /sum/.test(ie.state.result ?? ''));
+      const reqs2 = (await (await fetch(xai + '/chatRequests')).json()) as { messages: { role: string; content: string }[] }[];
+      const m2 = reqs2[c0 + 1].messages;
+      assert.strictEqual(m2[2].role, 'assistant'); assert.match(m2.at(-1)!.content, /Refine your last replacement: add a comment/);
+      await vscode.commands.executeCommand('vsgrok.inlineEdit.accept');
+      assert.strictEqual(doc.getText(), 'const a = 1;\nfunction add(x: number, y: number) {\n  return x + y; // sum\n}\nconst z = 3;\n');
+      assert.strictEqual(ie.active, false);
+      // Reject restores the original exactly (cursor line only; last line without a newline).
+      const we = new vscode.WorkspaceEdit();
+      we.replace(f, new vscode.Range(0, 0, doc.lineCount, 0), 'let q = 1;\nlet r = 2');
+      await vscode.workspace.applyEdit(we);
+      assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2');
+      ed.selection = new vscode.Selection(1, 3, 1, 3);
+      await reply(xai, 'const r = 2;');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit', 'make const');
+      await until(() => ie.state?.ready);
+      assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2\nconst r = 2;');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit.reject');
+      assert.strictEqual(doc.getText(), 'let q = 1;\nlet r = 2');
+      // Accept on the last line keeps no stray newline.
+      await reply(xai, 'const r = 2;');
+      await vscode.commands.executeCommand('vsgrok.inlineEdit', 'make const');
+      await until(() => ie.state?.ready);
+      await vscode.commands.executeCommand('vsgrok.inlineEdit.accept');
+      assert.strictEqual(doc.getText(), 'let q = 1;\nconst r = 2;');
+      await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+      // Secret files: refused before anything is sent.
+      const sec = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, '.env'));
+      await vscode.window.showTextDocument(sec);
+      const n0 = ((await (await fetch(xai + '/chatRequests')).json()) as unknown[]).length;
+      await vscode.commands.executeCommand('vsgrok.inlineEdit', 'anything');
+      assert.strictEqual(ie.active, false);
+      assert.strictEqual(((await (await fetch(xai + '/chatRequests')).json()) as unknown[]).length, n0);
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      // Keybinding contributions: Ctrl+I yields to other inline-chat providers; Tab only while a result is ready.
+      const pkg = vscode.extensions.all.find(e => e.packageJSON?.name === 'vsgrok')!.packageJSON;
+      const kb = pkg.contributes.keybindings.find((k: { command: string }) => k.command === 'vsgrok.inlineEdit');
+      assert.strictEqual(kb.key, 'ctrl+i'); assert.strictEqual(kb.mac, 'cmd+i'); assert.match(kb.when, /!inlineChatHasProvider/);
+      assert.match(pkg.contributes.keybindings.find((k: { key: string }) => k.key === 'tab').when, /vsgrok\.inlineEditReady.*!suggestWidgetVisible.*!inlineSuggestionVisible/);
+    });
   });
 });
