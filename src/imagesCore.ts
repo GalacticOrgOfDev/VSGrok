@@ -27,15 +27,15 @@ export function checkImageDataUrl(s: unknown): { ok: true; mime: 'image/png' | '
 }
 
 /** Keep valid images up to MAX_IMAGES; report what was dropped. */
-export function filterImages(list: unknown): { images: string[]; dropped: string[] } {
-  const images: string[] = []; const dropped: string[] = [];
+export function filterImages(list: unknown): { images: string[]; dropped: string[]; kept: number[] } {
+  const images: string[] = []; const dropped: string[] = []; const kept: number[] = [];
   for (const [i, s] of (Array.isArray(list) ? list : []).entries()) {
     const c = checkImageDataUrl(s);
     if (!c.ok) { dropped.push(`image ${i + 1}: ${c.reason}`); continue; }
     if (images.length >= MAX_IMAGES) { dropped.push(`image ${i + 1}: more than ${MAX_IMAGES} images`); continue; }
-    images.push(s as string);
+    images.push(s as string); kept.push(i);
   }
-  return { images, dropped };
+  return { images, dropped, kept };
 }
 
 /** Vision gate: false = known not to accept images; true/undefined = allow (unknown models are tried). */

@@ -17,7 +17,7 @@ This is a 4–6 minute recording that shows VSGrok building a small, visual proj
 5. Recording tips:
    - **New chat** (header) so the cost meter starts at zero.
    - Hide other notifications.
-   - Zoom to 125% (`Ctrl+=`) so the cards are readable.
+   - Zoom to 125% (`Ctrl+=`) so the cards are readable, and **widen the sidebar to about 420 px**. Below about 340 px the header hides the cost meter that you need in §8.
    - Have a terminal panel open.
 6. Optional: take a screenshot of a colour palette you like (any website or a Dribbble shot) for step 6.
 
@@ -45,7 +45,7 @@ Type into the chat (Enter to send):
 **Expected:**
 - The card resolves to **✓ Approved**, and the files appear in the Explorer.
 - A **✓ Plan applied** card shows the five paths with **Undo plan** and **Re-run checks**.
-- Optional beat: click **Undo plan**. The files disappear and the card reads **↶ Plan undone**. Then ask Grok "apply it again" and approve. Skip this if you're short on time.
+- (Undo plan works too, but save it for a separate short clip.)
 
 ## 3. Run it (≈20 s)
 
@@ -64,7 +64,7 @@ On the Plan applied card, click **Re-run checks**, or type:
 
 ## 5. Break something and let Grok fix it (≈60 s)
 
-1. Open `src/color.js` and introduce a bug, for example change the hue rotation in the triad scheme from `120` to `100`, or make `hslToHex` forget to pad single-digit hex values (`.padStart(2, '0')` → remove it). Save.
+1. Open `src/color.js`, find `hslToHex`, and delete the `.padStart(2, '0')` call so single-digit channels lose their leading zero (`#3b82f6`-style codes turn into 5-character strings). Save. Run `node palette.js "#0a0a0a"` once to show the broken hex code under the swatch.
 2. Ask:
 
    > Run the tests again and fix whatever fails.
@@ -75,11 +75,10 @@ On the Plan applied card, click **Re-run checks**, or type:
 - Grok proposes the fix as an **edit card** (one file, "✦ Grok wants to edit a file") or a one-row plan card. Click **View diff** to show the one-line change, then **Approve**.
 - Grok re-runs the tests (approve again) and gets **all passing**.
 - A **🧪 Re-run checks** button appears under the reply if Grok edited without re-running.
-- Optional: right-click inside `hexToHsl` and choose **Grok → Explain This** to show the context-menu actions.
 
 ## 6. Show it a picture (≈40 s)
 
-1. Paste the palette screenshot into the chat input (`Ctrl+V`). A thumbnail chip appears above the input; hover it, and note the **×** that removes it.
+1. Paste the palette screenshot into the chat input (`Ctrl+V`). Pasted screenshots work directly; dragging an image from the file manager needs **Shift** held while you drop. A thumbnail appears in the image tray above the input. Click it to preview, and note the **×** that removes it.
 2. Type:
 
    > Add a `--from-image` example to the README: describe the palette in this screenshot as hex codes and show the command that reproduces it.
@@ -87,7 +86,7 @@ On the Plan applied card, click **Re-run checks**, or type:
 **Expected:**
 - The message shows the thumbnail. Grok reads the image and answers with the hex codes.
 - Grok proposes a README edit; approve it.
-- If you had switched to a model without image input, an in-chat note would offer **Switch to grok-4.7** instead of sending.
+- If you had switched to a model without image input, an in-chat note would offer **Switch to grok-4.7 and resend** (or **Send without images**). Your text and images are kept.
 
 ## 7. X Search question (≈30 s)
 
@@ -101,7 +100,7 @@ With **𝕏** on in the header, type:
 
 ## 8. Wrap up on the cost meter (≈15 s)
 
-Point at the header meter, e.g. **"48k tok · $0.09"**. Hover it for the breakdown: turns, input (cached), output (reasoning), and the cost **as reported by xAI**. Click **New chat** to show that it resets.
+Point at the header meter, e.g. **"48k tok · $0.09"**. Click it to open the breakdown: turns, input (cached), output (reasoning), and the cost **as reported by xAI**. The same figures are in the ⚙ settings panel. Click **New chat** to show that it resets.
 
 ---
 
@@ -111,7 +110,8 @@ Point at the header meter, e.g. **"48k tok · $0.09"**. Hover it for the breakdo
 |---|---|
 | No plan card, just code blocks | Agent is off: toggle **Agent** in the header and ask again ("propose it as a plan"). |
 | `npm test` card shows a different command | You have `vsgrok.testCommand` set; clear it for the demo. |
-| "can't read images" note | Pick **grok-4.7** (or click **Switch to …** on the note). |
+| "can't read images" note | Click **Switch to grok-4.7 and resend** on the note. |
+| Cost meter missing from the header | The sidebar is too narrow; widen it, or open ⚙ to see "This chat". |
 | Cost meter shows tokens but no `$` | The API didn't report a cost for those turns; VSGrok never estimates prices. |
 | Deletes fail on Linux without a desktop trash | Set `files.enableTrash: false` (only matters if you show Undo of a delete). |
 

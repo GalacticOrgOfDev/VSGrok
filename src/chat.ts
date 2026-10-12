@@ -135,7 +135,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <button id="web-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="Web Search: let Grok search the web on xAI's servers (billed by xAI per call). Responses API only.">Web</button>
 <button id="x-toggle" type="button" class="h-btn tool-toggle" aria-pressed="false" title="X Search: let Grok search posts on X on xAI's servers (billed by xAI per fetched item). Responses API only.">𝕏</button>
 <label class="agent-toggle" title="Agent: let Grok propose edits and request terminal commands; each one waits for your Approve in this chat. Reading and searching the workspace is always on."><input type="checkbox" id="agent"> Agent</label>
-<span id="cost-meter" class="cost-meter" role="status" hidden tabindex="0"></span>
+<button id="cost-meter" type="button" class="cost-meter" hidden aria-describedby="cost-detail" aria-expanded="false" aria-controls="cost-pop"></button><span id="cost-detail" class="sr-only"></span>
 <button id="rules-chip" type="button" class="rules-chip" hidden aria-label="Project rules"></button>
 <button id="settings-btn" type="button" class="h-btn icon" aria-label="Settings" aria-controls="settings-panel" aria-expanded="false">⚙</button>
 <button id="clear-btn" type="button" class="h-btn" aria-label="New chat">New</button></div></header>
@@ -148,12 +148,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div id="settings-panel">
 <div class="slider-row"><label for="temperature">Temperature</label><input type="range" id="temperature" min="0" max="2" step="0.05"><span class="val" id="temperature-val"></span></div>
 <div class="slider-row"><label for="maxTokens">Max tokens</label><input type="range" id="maxTokens" min="256" max="32768" step="256"><span class="val" id="maxTokens-val"></span></div>
+<div class="slider-row cost-row" id="cost-row" hidden><span class="lbl">This chat</span><span id="cost-row-val"></span><button id="cost-row-details" type="button" class="h-btn link">details</button></div>
 <div class="slider-row"><button id="refresh-models-btn" class="h-btn">Refresh models</button><button id="setkey-btn" class="h-btn">Change API key</button></div></div>
 <div id="messages-wrap"><div id="messages" role="log" aria-live="polite"></div><button id="new-output" class="pill" hidden>↓ New output</button><div id="sr-announce" class="sr-only" aria-live="polite"></div></div>
+<div id="cost-pop" class="cost-pop" role="dialog" aria-label="Chat usage" hidden></div>
 <div id="chips"></div>
-<div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button><button id="attach-image" class="h-btn icon" aria-label="Attach image" title="Attach image (or paste / drop one)">🖼</button>
-<textarea id="input" rows="1" placeholder="Ask Grok… (Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
+<div id="image-tray" role="list" aria-label="Attached images" hidden></div>
+<div id="composer"><button id="add-ctx" class="h-btn" aria-label="Add context">+ Context</button><button id="attach-image" class="h-btn icon" aria-label="Attach image" title="Attach image (or paste, or Shift+drag one in)">🖼</button>
+<textarea id="input" rows="1" placeholder="Ask Grok… (paste or drop images · Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
 <button id="send" class="send" aria-label="Send">➤</button></div>
+<dialog id="img-preview" aria-label="Image preview"><img id="img-preview-img" alt=""><div class="dlg-actions"><button id="img-preview-close" type="button" class="h-btn">Close</button></div></dialog>
+<div id="toasts" aria-live="polite"></div>
 <script nonce="${nonce}" src="${u('marked.min.js')}"></script>
 <script nonce="${nonce}" src="${u('purify.min.js')}"></script>
 <script nonce="${nonce}" src="${u('cards.js')}"></script>
@@ -222,11 +227,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.onViewReady?.();
         break;
       }
-      case 'query': if (typeof m.text === 'string') {
-        const { images, dropped } = filterImages(m.images);
-        if (dropped.length) { this.post({ type: 'imagesRefused', reasons: dropped }); }
-        if (images.length && await this.visionGate()) { break; }
-        await this.send(m.text, images.length ? images : undefined);
+      case 'query': if (typeof m.text === 'string') { await this.handleQuery(m.text, m.images, m.imageNames); } break;
+      case 'switchModelAndResend': if (typeof m.model === 'string' && typeof m.text === 'string') {
+        const { models } = await this.getModels();
+        if (!models.some(x => x.id === m.model)) { this.post({ type: 'toast', msg: `Unknown model ${String(m.model).slice(0, 80)}` }); break; }
+        await cfg().update('model', m.model, vscode.ConfigurationTarget.Global); this.pushSettings();
+        await this.handleQuery(m.text, m.images, m.imageNames);
       } break;
       case 'pickImage': await this.pickImages(); break;
       case 'stop': this.stop(); break;
@@ -300,6 +306,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   async pushKeyState() { this.post({ type: 'keyState', hasKey: !!(await this.ctx.secrets.get(SECRET_KEY)) }); }
+
+  private async handleQuery(text: string, rawImages: unknown, rawNames: unknown) {
+    const { images, dropped, kept } = filterImages(rawImages);
+    if (dropped.length) { this.post({ type: 'imagesRefused', reasons: dropped }); }
+    if (images.length && await this.visionGate()) { return; }
+    const names = Array.isArray(rawNames) ? kept.map(i => rawNames[i] ?? '').map(n => String(n).replace(/\p{Cc}/gu, '').slice(0, 80)) : [];
+    this.pendingImageNames = names;
+    await this.send(text, images.length ? images : undefined);
+  }
+  private pendingImageNames: string[] = [];
 
   /** If the selected model is known not to accept images, show an in-chat note (with a switch offer) and return true. */
   private async visionGate(): Promise<boolean> {
@@ -471,7 +487,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.busy = true;
     const id = `m${++this.seq}`;
     const attached = [...this.contexts, ...(this.implicitSel ? [this.implicitSel] : [])];
-    this.post({ type: 'userMessage', id, text, chips: attached.map(c => this.chipOf(c)), images });
+    this.post({ type: 'userMessage', id, text, chips: attached.map(c => this.chipOf(c)), images, imageNames: images?.length ? this.pendingImageNames : undefined });
     this.contexts = []; this.pushContexts();
     this.lastUser = { text, images };
     let full = await this.resolveTags(text);

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+**Image input and cost meter UI review (UIGrok)**
+- The vision note no longer loses your message. The typed text is restored, the primary button is **Switch to <model> and resend** (switches, then replays the same text and images), and the secondary is **Send without images**. The note has its own neutral style and focuses the primary button.
+- Attached images sit in their own **image tray** above the input (a list, kept out of the context-chip collapse):
+  - the thumbnails are buttons that open an in-chat preview (`<dialog>`; Esc or Close returns focus);
+  - **×** is bigger, with a clear focus ring;
+  - removal is announced;
+  - pastes are named "Pasted image N".
+- Sent-message thumbnails enlarge on click, and their alt text carries the file names. High contrast gets borders.
+- Hints: the input placeholder mentions paste/drop, the Attach title mentions Shift+drag, and the composer shows a dashed outline while files are dragged over.
+- Sending images without text uses "What is in these images?" when there are several.
+- Concurrent drops or pastes can no longer exceed the 8-image cap.
+- **Cost meter:**
+  - It is now a button that opens a breakdown popover; it is no longer a live region that re-announced every turn.
+  - The breakdown is linked for screen readers, and the accessible name says "at least $X" when some turns had no reported cost; the "+" is explained.
+  - The figures also appear in the ⚙ panel, for narrow sidebars.
+  - Tabular numerals, and a pill outline in galactic.
+- **Toasts** stack in one container, all use `role=status` (including extension toasts), stay 6 s plus 1 s per 40 characters, pause on hover/focus, and close on click or Esc. The cap message reads "8 images max per message. N weren't added."
+- `docs/DEMO.md`:
+  - cut the optional Undo and Explain beats;
+  - scripted the exact `padStart` bug;
+  - added "widen the sidebar to about 420 px" so the cost meter stays visible;
+  - noted that pasted screenshots work and that OS drags need Shift;
+  - updated the vision-note and cost-meter steps.
+
 ## 0.8.0 — 2026-10-12
 **Image input**
 - Add images in three ways: paste a screenshot into the chat input (`Ctrl+V`), drop image files (from the Explorer, or from the OS), or click **🖼 Attach image**. Images show as removable thumbnail chips before sending, and the sent message shows them too.

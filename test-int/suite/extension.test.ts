@@ -446,13 +446,18 @@ suite('VSGrok in VS Code', () => {
       assert.strictEqual(note.model, 'mock-text'); assert.strictEqual(note.suggest, 'mock-vision');
       const reqs0 = await (await fetch(xai + '/requests')).json() as unknown[];
       assert.strictEqual(reqs0.length, 0);
-      // Bad images are refused before sending.
-      const r0 = posts('imagesRefused').length;
-      await c.update('model', 'mock-vision', vscode.ConfigurationTarget.Global);
-      await api.chat.testReceive({ type: 'query', text: 'what is this?', images: [PNG, 'data:image/svg+xml;base64,PHN2Zz4='] });
+      // Unknown model in a resend is refused; a real one switches and resends (bad image dropped first).
+      const t0 = posts('toast').length;
+      await api.chat.testReceive({ type: 'switchModelAndResend', model: 'evil-model', text: 'x', images: [PNG] });
+      assert.match(posts('toast')[t0].msg, /Unknown model/);
+      const r0 = posts('imagesRefused').length; const u0 = posts('userMessage').length;
+      await api.chat.testReceive({ type: 'switchModelAndResend', model: 'mock-vision', text: 'what is this?', images: ['data:image/svg+xml;base64,PHN2Zz4=', PNG], imageNames: ['bad.svg', 'shot.png'] });
       await idle();
+      assert.strictEqual(vscode.workspace.getConfiguration('vsgrok').get('model'), 'mock-vision');
       assert.match(posts('imagesRefused')[r0].reasons[0], /PNG or JPEG/);
-      const reqs = await (await fetch(xai + '/requests')).json() as { store: boolean; input: { role: string; content: unknown }[] }[];
+      assert.deepStrictEqual(posts('userMessage')[u0].imageNames, ['shot.png']);
+      const reqs = await (await fetch(xai + '/requests')).json() as { model: string; store: boolean; input: { role: string; content: unknown }[] }[];
+      assert.strictEqual(reqs[0].model, 'mock-vision');
       assert.strictEqual(reqs.length, 1);
       const user = reqs[0].input.find(i => i.role === 'user')!;
       assert.deepStrictEqual(user.content, [{ type: 'input_text', text: 'what is this?' }, { type: 'input_image', image_url: PNG }]);
@@ -480,7 +485,8 @@ suite('VSGrok in VS Code', () => {
       assert.strictEqual(posts('contextRefused').length - f0, 2);
       const html: string = api.chat['view'].webview.html;
       assert.match(html, /img-src [^;]* data:;/); assert.doesNotMatch(html, /blob:/);
-      assert.match(html, /id="attach-image"/); assert.match(html, /id="cost-meter"/);
+      assert.match(html, /id="attach-image"/); assert.match(html, /<button id="cost-meter" type="button"/); assert.doesNotMatch(html, /id="cost-meter"[^>]*role="status"/);
+      assert.match(html, /<dialog id="img-preview"/); assert.match(html, /id="image-tray" role="list"/);
     } finally {
       await api.chat['ctx'].secrets.delete('vsgrok.apiKey');
       await c.update('baseUrl', undefined, vscode.ConfigurationTarget.Global);

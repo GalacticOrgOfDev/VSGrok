@@ -24,6 +24,7 @@ test('images: size cap at 20 MiB and count cap', () => {
   assert.match((checkImageDataUrl(huge) as { reason: string }).reason, /20 MiB/);
   const r = filterImages(Array(MAX_IMAGES + 2).fill(PNG).concat(['nope']));
   assert.equal(r.images.length, MAX_IMAGES); assert.equal(r.dropped.length, 3);
+  assert.deepEqual(filterImages(['bad', PNG, 'x', PNG]).kept, [1, 3]);
 });
 
 test('vision gate: block only models known not to accept images; suggest a vision model', () => {
@@ -49,7 +50,8 @@ test('cost meter: sums API usage; cost only when reported; "+" when some turns l
   assert.equal(v.text, '1.5k tok'); assert.match(v.tooltip, /not reported by the API/); assert.doesNotMatch(v.text, /\$/);
   m = addTurn(m, { input: 10_000, output: 500, reasoning: 0, cached: 0, costUsd: 0.0123 });
   v = meterView(m);
-  assert.equal(v.text, '12k tok · $0.012+'); assert.match(v.tooltip, /1 turn without a reported cost/); assert.match(v.tooltip, /Input: 11,200 tokens \(1,000 cached\)/);
+  assert.equal(v.text, '12k tok · $0.012+'); assert.match(v.tooltip, /some turns didn't report a cost \(1 of 2\)/);
+  assert.match(v.ariaLabel, /at least \$0\.012/); assert.equal(v.lines.length, 6); assert.match(v.tooltip, /Input: 11,200 tokens \(1,000 cached\)/);
   const only = meterView(addTurn(emptyMeter(), { input: 1, output: 1, reasoning: 0, cached: 0, costUsd: 2.5 }));
   assert.equal(only.text, '2 tok · $2.50');
   assert.equal(fmtTokens(2_500_000), '2.5M');
@@ -64,6 +66,8 @@ test('cards: image helpers', () => {
   assert.equal(cards.keepOriginal('image/png', 5e6, 100, 100), false);
   assert.equal(cards.keepOriginal('image/jpeg', 1000, 4000, 100), false);
   assert.deepEqual(cards.imageRoom(6, 4), { take: 2, dropped: 2 });
-  assert.match(cards.visionNote('m', 's').action, /Switch to s/);
+  assert.equal(cards.visionNote('m', 's').action, 'Switch to s and resend');
+  assert.equal(cards.imagesOnlyPrompt(1), 'What is in this image?'); assert.equal(cards.imagesOnlyPrompt(3), 'What is in these images?');
+  assert.equal(cards.toastMs('x'.repeat(80)), 8000);
   assert.equal(cards.visionNote('m', '').action, '');
 });

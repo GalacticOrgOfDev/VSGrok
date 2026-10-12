@@ -96,8 +96,10 @@
   /** Room left for images (count cap). */
   function imageRoom(current, adding) { const room = Math.max(0, IMG.MAX - current); return { take: Math.min(room, adding), dropped: Math.max(0, adding - room) }; }
   function visionNote(model, suggest) {
-    return { title: '🖼 ' + model + ' can\'t read images', body: suggest ? 'Switch to ' + suggest + ' (accepts image input) and press Send again. Your images stay attached.' : 'None of your available models report image input. Remove the images to send text only.', action: suggest ? 'Switch to ' + suggest : '' };
+    return { title: '🖼 ' + model + ' can\'t read images', body: suggest ? model + ' doesn\'t accept image input.' : 'None of your available models report image input. Send without images, or remove them.', action: suggest ? 'Switch to ' + suggest + ' and resend' : '' };
   }
+  function imagesOnlyPrompt(n) { return n > 1 ? 'What is in these images?' : 'What is in this image?'; }
+  function toastMs(text) { return 6000 + Math.ceil(String(text).length / 40) * 1000; }
 
-  return { IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
+  return { IMG, fitSize, dataUrlBytes, keepOriginal, imageRoom, visionNote, imagesOnlyPrompt, toastMs, ERR, errorSpec, rulesChip, firstLine, planSpec, approveLabel, problemsChip, pathParts, selectAllState };
 });

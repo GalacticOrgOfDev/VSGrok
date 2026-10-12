@@ -17,17 +17,19 @@ export function fmtTokens(n: number): string {
 }
 export function fmtUsd(v: number): string { return v < 0.01 ? '$' + v.toFixed(4) : v < 1 ? '$' + v.toFixed(3) : '$' + v.toFixed(2); }
 
-/** Header text + tooltip. Cost is shown only if the API reported it; "+" marks turns without a reported cost. */
-export function meterView(m: MeterState): { hidden: boolean; text: string; tooltip: string } {
-  if (!m.turns) { return { hidden: true, text: '', tooltip: '' }; }
-  const tok = m.input + m.output;
+/** Header text, accessible name and breakdown lines. Cost is shown only if the API reported it. */
+export function meterView(m: MeterState): { hidden: boolean; text: string; ariaLabel: string; tooltip: string; lines: string[] } {
+  if (!m.turns) { return { hidden: true, text: '', ariaLabel: '', tooltip: '', lines: [] }; }
+  const tok = fmtTokens(m.input + m.output) + ' tok';
   const cost = m.costTurns ? fmtUsd(m.costUsd) + (m.missing ? '+' : '') : '';
   const lines = [
     `This chat: ${m.turns} turn${m.turns === 1 ? '' : 's'}`,
     `Input: ${m.input.toLocaleString('en-US')} tokens (${m.cached.toLocaleString('en-US')} cached)`,
     `Output: ${m.output.toLocaleString('en-US')} tokens (${m.reasoning.toLocaleString('en-US')} reasoning)`,
-    m.costTurns ? `Cost reported by xAI: ${fmtUsd(m.costUsd)}${m.missing ? ` (${m.missing} turn${m.missing === 1 ? '' : 's'} without a reported cost not included)` : ''}` : 'Cost: not reported by the API for this chat (tokens only)',
+    m.costTurns ? `Cost reported by xAI: ${fmtUsd(m.costUsd)}` : 'Cost: not reported by the API for this chat (tokens only)',
+    ...(m.costTurns && m.missing ? [`+ = some turns didn't report a cost (${m.missing} of ${m.turns}); they aren't included`] : []),
     'Resets on New chat.',
   ];
-  return { hidden: false, text: fmtTokens(tok) + ' tok' + (cost ? ' · ' + cost : ''), tooltip: lines.join('\n') };
+  const ariaLabel = `Chat usage: ${m.input + m.output} tokens` + (m.costTurns ? `, ${m.missing ? 'at least ' : ''}${fmtUsd(m.costUsd)}` : '') + '. Show details';
+  return { hidden: false, text: tok + (cost ? ' · ' + cost : ''), ariaLabel, tooltip: lines.join('\n'), lines };
 }

@@ -106,19 +106,46 @@
     }
     return el;
   }
+  function renderImageTray() {
+    const tray = $('image-tray'); tray.innerHTML = '';
+    const imgs = state.images || [];
+    tray.hidden = !imgs.length;
+    imgs.forEach((im, i) => {
+      const b = document.createElement('div'); b.className = 'chip image-chip'; b.setAttribute('role', 'listitem');
+      const alt = 'Image ' + (i + 1) + ': ' + im.name;
+      const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'thumb'; tb.setAttribute('aria-label', 'Preview ' + alt); tb.title = im.name;
+      const th = document.createElement('img'); th.src = im.dataUrl; th.alt = ''; th.width = 28; th.height = 28; tb.appendChild(th);
+      tb.addEventListener('click', () => openPreview(im.dataUrl, alt, tb));
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'chip-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove image ' + (i + 1) + ' (' + im.name + ')');
+      x.addEventListener('click', () => {
+        state.images = state.images.filter((o) => o.id !== im.id); renderImageTray(); input.focus();
+        announce.textContent = 'Removed image ' + (i + 1) + '. ' + state.images.length + ' left.';
+      });
+      b.append(tb, x); tray.appendChild(b);
+    });
+  }
+  // In-webview image preview (<dialog>): Esc or Close, focus returns to the opener.
+  let previewOpener = null;
+  function openPreview(src, alt, opener) {
+    const dlg = $('img-preview'); const img = $('img-preview-img');
+    img.src = src; img.alt = alt; previewOpener = opener || null;
+    if (typeof dlg.showModal === 'function') { dlg.showModal(); } else { dlg.setAttribute('open', ''); }
+    $('img-preview-close').focus();
+  }
+  function closePreview() {
+    const dlg = $('img-preview');
+    if (typeof dlg.close === 'function' && dlg.open) { dlg.close(); } else { dlg.removeAttribute('open'); }
+    if (previewOpener) { previewOpener.focus(); previewOpener = null; }
+  }
+  $('img-preview-close').addEventListener('click', closePreview);
+  $('img-preview').addEventListener('cancel', (e) => { e.preventDefault(); closePreview(); });
+  $('img-preview').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closePreview(); } });
   function renderChips() {
     chipsEl.innerHTML = '';
     const list = state.chips;
     const pv = VSGrokCards.problemsChip(state.problems ? state.problems.count : 0, state.problems ? state.problems.enabled : true);
-    const imgs = state.images || [];
-    chipsEl.hidden = list.length === 0 && pv.hidden && !imgs.length;
-    imgs.forEach((im, i) => {
-      const b = document.createElement('span'); b.className = 'chip image-chip'; b.title = im.name;
-      const th = document.createElement('img'); th.src = im.dataUrl; th.alt = 'Image ' + (i + 1) + ': ' + im.name; th.width = 28; th.height = 28;
-      const x = document.createElement('button'); x.type = 'button'; x.className = 'chip-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove image ' + (i + 1) + ' (' + im.name + ')');
-      x.addEventListener('click', () => { state.images = state.images.filter((o) => o.id !== im.id); renderChips(); input.focus(); });
-      b.append(th, x); chipsEl.appendChild(b);
-    });
+    chipsEl.hidden = list.length === 0 && pv.hidden;
+    renderImageTray();
     if (!pv.hidden) {
       const pc = document.createElement('button'); pc.type = 'button'; pc.className = 'chip problems-chip' + (state.problems.enabled ? '' : ' off');
       const gl = document.createElement('span'); gl.className = 'chip-glyph'; gl.textContent = pv.glyph; gl.setAttribute('aria-hidden', 'true');
@@ -136,12 +163,19 @@
     }
   }
 
-  function addUser(text, chips, images) {
+  function addUser(text, chips, images, names) {
     const el = document.createElement('div'); el.className = 'message user';
     const t = document.createElement('div'); t.className = 'user-text'; t.textContent = text; el.appendChild(t);
     if (images && images.length) {
       const row = document.createElement('div'); row.className = 'user-images';
-      images.forEach((u, i) => { if (/^data:image\/(png|jpeg);base64,/.test(u)) { const im = document.createElement('img'); im.src = u; im.alt = 'Attached image ' + (i + 1); row.appendChild(im); } });
+      images.forEach((u, i) => {
+        if (!/^data:image\/(png|jpeg);base64,/.test(u)) { return; }
+        const alt = 'Attached image ' + (i + 1) + (names && names[i] ? ': ' + names[i] : '');
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'thumb'; b.setAttribute('aria-label', 'Enlarge ' + alt);
+        const im = document.createElement('img'); im.src = u; im.alt = ''; b.appendChild(im);
+        b.addEventListener('click', () => openPreview(u, alt, b));
+        row.appendChild(b);
+      });
       el.appendChild(row);
     }
     if (chips && chips.length) { const row = document.createElement('div'); row.className = 'mini-chips'; chips.forEach((c) => row.appendChild(chipEl(c, false))); el.appendChild(row); }
@@ -232,12 +266,15 @@
     const text = input.value.trim();
     const imgs = state.images.map((i) => i.dataUrl);
     if (!text && !imgs.length) { return; }
-    vscode.postMessage(imgs.length ? { type: 'query', text: text || 'What is in this image?', images: imgs } : { type: 'query', text });
+    const q = imgs.length ? { type: 'query', text: text || VSGrokCards.imagesOnlyPrompt(imgs.length), images: imgs, imageNames: state.images.map((i) => i.name) } : { type: 'query', text };
+    // Kept until the extension echoes userMessage; restored if a vision note refuses the send.
+    state.pending = { text: input.value, query: q };
+    vscode.postMessage(q);
     input.value = ''; autoGrow();
   }
   // ---- image input: paste, drop, Attach image; downscaled here, sent as PNG/JPEG data URLs ----
 
-  let imgSeq = 0;
+  let imgSeq = 0, pasteSeq = 0, imgInFlight = 0;
   function loadImage(src) { return new Promise((ok, fail) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => fail(new Error('not a readable image')); im.src = src; }); }
   function readFile(f) { return new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => fail(r.error); r.readAsDataURL(f); }); }
   async function normalizeImage(dataUrl) {
@@ -255,26 +292,51 @@
     throw new Error('image too large even after compression');
   }
   async function addImages(sources) {
-    const room = VSGrokCards.imageRoom(state.images.length, sources.length);
-    if (room.dropped) { toast('Up to ' + VSGrokCards.IMG.MAX + ' images per message; ' + room.dropped + ' not added.'); }
+    // Reserve slots synchronously so concurrent drops/pastes can't exceed the cap.
+    const room = VSGrokCards.imageRoom(state.images.length + imgInFlight, sources.length);
+    imgInFlight += room.take;
+    if (room.dropped) { toast(VSGrokCards.IMG.MAX + ' images max per message. ' + room.dropped + (room.dropped === 1 ? ' wasn\'t' : ' weren\'t') + ' added.'); }
     for (const src of sources.slice(0, room.take)) {
       try {
         const raw = typeof src.dataUrl === 'string' ? src.dataUrl : await readFile(src.file);
         const dataUrl = await normalizeImage(raw);
-        state.images.push({ id: 'img' + (++imgSeq), dataUrl, name: src.name || 'image' });
+        ++imgSeq; state.images.push({ id: 'img' + imgSeq, dataUrl, name: src.name || (src.pasted ? 'Pasted image ' + (++pasteSeq) : 'image ' + imgSeq) });
       } catch (err) { toast('Couldn\'t attach ' + (src.name || 'image') + ': ' + (err && err.message ? err.message : err)); }
+      finally { imgInFlight--; }
     }
-    renderChips();
+    renderImageTray();
   }
-  function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.setAttribute('role', 'status'); d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); }
+  // Toasts stack in #toasts; each stays 6s + 1s per 40 chars, pauses on hover/focus, closes on click or Esc.
+  function toast(msg) {
+    const box = $('toasts');
+    const d = document.createElement('div'); d.className = 'toast'; d.setAttribute('role', 'status'); d.tabIndex = 0; d.textContent = String(msg);
+    let left = VSGrokCards.toastMs(d.textContent), started = Date.now(), timer = null;
+    const close = () => { clearTimeout(timer); d.remove(); };
+    const run = () => { started = Date.now(); timer = setTimeout(close, left); };
+    const pause = () => { clearTimeout(timer); left = Math.max(1000, left - (Date.now() - started)); };
+    d.addEventListener('mouseenter', pause); d.addEventListener('focus', pause);
+    d.addEventListener('mouseleave', run); d.addEventListener('blur', run);
+    d.addEventListener('click', close); d.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); } });
+    box.appendChild(d); run();
+    return d;
+  }
   input.addEventListener('paste', (e) => {
     const items = e.clipboardData ? [...e.clipboardData.items] : [];
     const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
     if (!files.length) { return; }
     e.preventDefault();
-    void addImages(files.map((f) => ({ file: f, name: f.name || 'pasted image' })));
+    void addImages(files.map((f) => ({ file: f, name: f.name && !/^image\.\w+$/.test(f.name) ? f.name : '' , pasted: true })));
   });
   $('attach-image').addEventListener('click', () => vscode.postMessage({ type: 'pickImage' }));
+  function toggleCostPop(open) {
+    const pop = $('cost-pop'), btnEl = $('cost-meter');
+    const o = open === undefined ? pop.hidden : open;
+    pop.hidden = !o; btnEl.setAttribute('aria-expanded', String(o));
+    if (o) { pop.tabIndex = -1; pop.focus({ preventScroll: true }); }
+  }
+  $('cost-meter').addEventListener('click', () => toggleCostPop());
+  $('cost-row-details').addEventListener('click', () => { toggleCostPop(true); });
+  $('cost-pop').addEventListener('keydown', (e) => { if (e.key === 'Escape') { toggleCostPop(false); $('cost-meter').focus(); } });
   function autoGrow() {
     input.style.height = 'auto';
     const lh = parseFloat(getComputedStyle(input).lineHeight) || 18;
@@ -326,8 +388,12 @@
 
   // drag & drop from Explorer
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
+  let dragDepth = 0;
+  const hasFiles = (e) => !!e.dataTransfer && [...(e.dataTransfer.types || [])].some((t) => t === 'Files' || /uri-list/.test(t));
+  document.addEventListener('dragenter', (e) => { if (hasFiles(e)) { dragDepth++; document.body.classList.add('drop-ok'); } });
+  document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) { document.body.classList.remove('drop-ok'); } });
   document.addEventListener('drop', (e) => {
-    e.preventDefault();
+    e.preventDefault(); dragDepth = 0; document.body.classList.remove('drop-ok');
     const dt = e.dataTransfer; if (!dt) { return; }
     const raw = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') || dt.getData('text/plain');
     const uris = raw.split(/\r?\n/).map((s) => s.trim()).filter((s) => /^[a-z][\w+.-]*:/i.test(s));
@@ -546,21 +612,49 @@
         setToggle('web-toggle', m.webSearch, m.api === 'chat'); setToggle('x-toggle', m.xSearch, m.api === 'chat'); break;
       case 'models': setModelOptions(m.models || [], m.current); modelIn.title = 'Grok model' + (m.source === 'fallback' ? ' (built-in list: ' + (m.error || 'offline') + ')' : m.source === 'live' ? ' (live from xAI)' : ''); break;
       case 'keyState': $('welcome').hidden = !!m.hasKey; document.body.classList.toggle('no-key', !m.hasKey); break;
-      case 'userMessage': addUser(m.text, m.chips, m.images); if (m.images && m.images.length) { state.images = []; renderChips(); } break;
+      case 'userMessage': addUser(m.text, m.chips, m.images, m.imageNames); state.pending = null; if (m.images && m.images.length) { state.images = []; renderImageTray(); } break;
       case 'imageFile': if (typeof m.dataUrl === 'string') { void addImages([{ dataUrl: m.dataUrl, name: String(m.name || 'image') }]); } break;
       case 'imagesRefused': toast('Image not attached: ' + (m.reasons || []).map(String).join('; ')); break;
       case 'visionNote': {
         const v = VSGrokCards.visionNote(String(m.model), m.suggest ? String(m.suggest) : '');
+        const pend = state.pending; state.pending = null;
+        // Give the typed text back; the images are still attached.
+        if (pend && !input.value.trim()) { input.value = pend.text; autoGrow(); }
         const btns = [];
-        if (m.suggest) { btns.push({ label: v.action, action: 'switch', primary: true, fn: (b, c) => { b.disabled = true; currentModel = String(m.suggest); setModelOptions([...modelIn.options].map((o) => ({ id: o.value })), currentModel); vscode.postMessage({ type: 'updateSettings', model: currentModel }); c.querySelector('.approval-status').textContent = 'Switched to ' + currentModel + '. Press Send to try again.'; input.focus(); } }); }
-        btns.push({ label: 'Remove images', action: 'remove', primary: false, fn: (b, c) => { b.disabled = true; state.images = []; renderChips(); c.querySelector('.approval-status').textContent = 'Images removed.'; } });
-        const card = infoCard('vision-note', v.title, [v.body], btns); card.dataset.kind = 'command';
-        announce.textContent = v.title;
+        if (m.suggest) {
+          btns.push({ label: v.action, action: 'switch', primary: true, fn: (b, c) => {
+            c.querySelectorAll('button').forEach((x) => (x.disabled = true));
+            currentModel = String(m.suggest); setModelOptions([...modelIn.options].map((o) => ({ id: o.value })), currentModel);
+            const q = pend ? pend.query : null;
+            if (q) {
+              vscode.postMessage({ type: 'switchModelAndResend', model: currentModel, text: q.text, images: q.images, imageNames: q.imageNames });
+              state.pending = { text: pend.text, query: q }; input.value = ''; autoGrow();
+            } else { vscode.postMessage({ type: 'updateSettings', model: currentModel }); }
+            c.querySelector('.approval-status').textContent = 'Switched to ' + currentModel + (q ? ' and resent.' : '.');
+          } });
+        }
+        btns.push({ label: 'Send without images', action: 'text-only', primary: !m.suggest, fn: (b, c) => {
+          c.querySelectorAll('button').forEach((x) => (x.disabled = true));
+          state.images = []; renderImageTray();
+          const text = (pend && pend.text.trim()) || input.value.trim();
+          if (text) { state.pending = { text, query: { type: 'query', text } }; vscode.postMessage({ type: 'query', text }); input.value = ''; autoGrow(); }
+          c.querySelector('.approval-status').textContent = text ? 'Sent without images.' : 'Images removed.';
+        } });
+        const card = infoCard('vision-note', v.title, [v.body], btns); card.dataset.kind = 'note';
+        const primary = card.querySelector('.approval-btn.approve'); if (primary) { primary.focus({ preventScroll: true }); }
+        announce.textContent = v.title + '. ' + v.body;
         break;
       }
       case 'costMeter': {
+        // Not a live region: the figures are read on demand (button + popover), never announced per turn.
         const el = $('cost-meter'); el.hidden = !!m.hidden; el.textContent = m.text || ''; el.title = m.tooltip || '';
-        el.setAttribute('aria-label', m.hidden ? '' : 'Chat usage: ' + m.text);
+        el.setAttribute('aria-label', m.hidden ? 'Chat usage' : String(m.ariaLabel || m.text));
+        const lines = Array.isArray(m.lines) ? m.lines.map(String) : [];
+        $('cost-detail').textContent = lines.join('. ');
+        const pop = $('cost-pop'); pop.innerHTML = '';
+        lines.forEach((l) => { const p = document.createElement('div'); p.textContent = l; pop.appendChild(p); });
+        if (m.hidden) { pop.hidden = true; el.setAttribute('aria-expanded', 'false'); }
+        $('cost-row').hidden = !!m.hidden; $('cost-row-val').textContent = m.text || '';
         break;
       }
       case 'streamStart': startTurn(m.id); break;
@@ -650,7 +744,7 @@
         break;
       }
       case 'problemsState': { state.problems = { count: m.count | 0, enabled: !!m.enabled }; renderChips(); break; }
-      case 'toast': { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m.msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); break; }
+      case 'toast': toast(m.msg); break;
       case 'chatCleared': approvalCards.clear(); messagesEl.innerHTML = ''; turns.clear(); state.streaming = null; setSendMode(false); break;
     }
   });
