@@ -89,3 +89,17 @@ export function parseFileLink(href: string): { path: string; line?: number; endL
   const line = m ? Number(m[2]) : undefined; const endLine = m?.[3] ? Number(m[3]) : undefined;
   return { path, line: line && line > 0 ? line : undefined, endLine: endLine && line && endLine >= line ? endLine : undefined };
 }
+
+/** FM7: repo-local filter/diff drivers run commands during working-tree diffs. Given
+ *  `git config --local --get-regexp` output, return -c overrides that blank every such command. */
+export const DRIVER_CONFIG_RE = '^(filter|diff)\\..*\\.(clean|smudge|process|textconv|command)$';
+export function driverOverrides(configOut: string): string[] {
+  const keys = new Set<string>();
+  for (const line of configOut.split('\n')) {
+    const m = line.split(/\s/, 1)[0].match(/^(filter|diff)\.(.+)\.(clean|smudge|process|textconv|command)$/i);
+    if (!m) { continue; }
+    keys.add(`${m[1]}.${m[2]}.${m[3]}=`);
+    if (m[1].toLowerCase() === 'filter') { keys.add(`filter.${m[2]}.required=false`); }
+  }
+  return [...keys].flatMap(k => ['-c', k]);
+}

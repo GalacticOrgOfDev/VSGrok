@@ -2,7 +2,7 @@
 // "Ask Grok"; one click sends the command, exit code and output tail to chat. No notifications.
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat';
-import { TailBuffer, isHelpableFailure, failurePrompt, Failure } from './terminalCore';
+import { TailBuffer, isHelpableFailure, failurePrompt, Failure, MAX_READ_CHARS } from './terminalCore';
 
 const HIDE_AFTER_MS = 3 * 60_000;
 
@@ -35,20 +35,21 @@ export class TerminalHelper implements vscode.Disposable {
   private onStart(e: vscode.TerminalShellExecutionStartEvent) {
     if (!this.enabled()) { return; }
     const buf = new TailBuffer(); this.buffers.set(e.execution, buf);
-    void (async () => { try { for await (const d of e.execution.read()) { buf.push(d); } } catch { /* stream closed */ } })();
+    // M5: stop when the setting is turned off or after MAX_READ_CHARS (the tail captured so far is kept).
+    void (async () => { try { for await (const d of e.execution.read()) { if (!this.enabled() || buf.total > MAX_READ_CHARS) { break; } buf.push(d); } } catch { /* stream closed */ } })();
   }
 
   /** Public for tests: the end-of-command handler with the execution's details. */
   onEnd(x: { terminal?: vscode.Terminal; commandLine: string; exitCode: number | undefined; cwd?: string; output: string; shell?: string }) {
     if (!this.enabled()) { return; }
     if (!isHelpableFailure(x.exitCode)) {
-      if (x.exitCode === 0 && (!this.last || this.last.terminal === x.terminal)) { this.clear(); } // fixed: hide
+      if (x.exitCode === 0) { this.clear(); } // a later success in any terminal hides it
       return;
     }
     if (!x.commandLine.trim()) { return; }
     this.last = { ...x, exitCode: x.exitCode, at: Date.now() };
     const short = x.commandLine.trim().length > 40 ? x.commandLine.trim().slice(0, 37) + '…' : x.commandLine.trim();
-    this.item.text = `$(sparkle) Ask Grok`;
+    this.item.text = `$(sparkle) Ask Grok (exit ${x.exitCode})`;
     this.item.tooltip = new vscode.MarkdownString(`\`${short.replace(/`/g, "'")}\` exited with code ${x.exitCode}.\n\nClick to send the command and the last lines of output to Grok for a diagnosis and a proposed fix (you approve any change).\n\nTurn off with \`vsgrok.terminalHelper.enabled\`.`);
     this.item.accessibilityInformation = { label: `Ask Grok why ${short} failed with exit code ${x.exitCode}`, role: 'button' };
     this.item.show();

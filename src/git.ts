@@ -6,7 +6,7 @@ import { apiMode } from './config';
 import { COMMIT_FORMAT, renderCommitMessage } from './xai/commit';
 import { oneShot } from './commands';
 import { ChatViewProvider } from './chat';
-import { filterDiff, droppedNote, commitUserPrompt, COMMIT_SYSTEM, COMMIT_SYSTEM_CHAT, reviewPrompt, PR_SYSTEM, prUserPrompt } from './gitCore';
+import { driverOverrides, DRIVER_CONFIG_RE, filterDiff, droppedNote, commitUserPrompt, COMMIT_SYSTEM, COMMIT_SYSTEM_CHAT, reviewPrompt, PR_SYSTEM, prUserPrompt } from './gitCore';
 import { isSecretPath } from './index/lexical';
 import { realInsideSync } from './security';
 import { stripFences } from './xai/sse';
@@ -17,7 +17,18 @@ interface GitRepo { rootUri: vscode.Uri; inputBox: { value: string }; ui?: { sel
 const SAFE = ['-c', 'core.fsmonitor=false', '-c', 'core.quotepath=off', '-c', 'color.ui=false', '--no-pager'];
 const DIFF = ['--no-ext-diff', '--no-textconv', '--no-color'];
 
-export function git(cwd: string, args: string[], maxBuffer = 32 * 1024 * 1024): Promise<string> {
+/** Overrides blanking repo-local filter/diff driver commands (FM7), for commands that read the working tree or diff. */
+async function driverArgs(cwd: string): Promise<string[]> {
+  const out = await raw(cwd, ['config', '--local', '--get-regexp', DRIVER_CONFIG_RE]).catch(() => '');
+  return driverOverrides(out);
+}
+
+export async function git(cwd: string, args: string[], maxBuffer = 32 * 1024 * 1024): Promise<string> {
+  const extra = ['diff', 'ls-files', 'status', 'log'].includes(args[0]) || args.includes('diff') ? await driverArgs(cwd) : [];
+  return raw(cwd, [...extra, ...args], maxBuffer);
+}
+
+function raw(cwd: string, args: string[], maxBuffer = 32 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', [...SAFE, ...args], { cwd, maxBuffer, timeout: 30000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } }, (err, stdout, stderr) => {
       if (err) { reject(new Error((stderr || err.message).trim())); } else { resolve(stdout); }
@@ -142,7 +153,7 @@ export async function draftPrDescription(ctx: vscode.ExtensionContext, arg?: { r
     if (!sameAsBase) {
       raw = await git(cwd, ['diff', `${mergeBase}`, ...DIFF, '-M']); // committed + uncommitted work since the fork point
       commits = ((await gitOk(cwd, ['log', '--no-merges', '--format=%s', `${mergeBase}..HEAD`])) ?? '').split('\n').filter(Boolean).slice(0, 50);
-      stat = (await gitOk(cwd, ['diff', '--stat', `${mergeBase}`])) ?? '';
+      stat = (await gitOk(cwd, ['diff', '--stat', ...DIFF, `${mergeBase}`])) ?? '';
     } else { raw = await workingDiff(cwd); }
   } catch (e) { status(`git diff failed: ${(e as Error).message}`); return; }
   const diff = filterDiff(raw);

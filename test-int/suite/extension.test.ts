@@ -912,6 +912,10 @@ suite('VSGrok in VS Code', () => {
       assert.match(body, /gitdemo\.ts/); assert.match(body, /chore: baseline/); assert.match(body, /add demo/); assert.match(body, /commit_message/);
       assert.doesNotMatch(body, /SHOULD_NOT_LEAK/); assert.match(body, /never sent\): \.env/);
       g('commit', '-q', '-m', 'feat: demo');
+      // FM7: a repo-local filter driver must not run during working-tree diffs.
+      const marker = path.join(require('os').tmpdir(), `vsgrok-filter-ran-${Date.now()}`);
+      g('config', 'filter.evil.clean', `touch ${marker}; cat`); g('config', 'diff.evil.textconv', `touch ${marker}; cat`);
+      await w('.gitattributes', 'gitdemo.ts filter=evil diff=evil\n');
       // 2) review: unstaged edit + untracked file + secret change.
       await w('gitdemo.ts', 'export const a = 1;\nexport const b = 3;\n');
       await w('newfile.ts', 'export const fresh = true;\n');
@@ -924,6 +928,7 @@ suite('VSGrok in VS Code', () => {
       assert.strictEqual(posts('userMessage')[u0].text, 'Review my uncommitted changes');
       const rb = JSON.stringify((await reqs()).slice(n1));
       assert.match(rb, /export const b = 3/); assert.match(rb, /newfile\.ts/); assert.match(rb, /#L42/); assert.doesNotMatch(rb, /SHOULD_NOT_LEAK/);
+      assert.strictEqual(require('fs').existsSync(marker), false, 'filter/textconv driver did not run');
       assert.strictEqual(await api.chat.openFileLink('gitdemo.ts#L2'), true);
       const ed = vscode.window.activeTextEditor!;
       assert.ok(ed.document.uri.path.endsWith('/gitdemo.ts')); assert.strictEqual(ed.selection.start.line, 1);
@@ -947,7 +952,7 @@ suite('VSGrok in VS Code', () => {
     th.clear();
     th.onEnd({ commandLine: 'npm run build', exitCode: 2, cwd: '/w', output: '\x1b[31merror TS2304\x1b[0m: Cannot find name foo\n' });
     assert.strictEqual(th.visible, true);
-    th.onEnd({ commandLine: 'npm run build', exitCode: 0, output: '' }); assert.strictEqual(th.visible, false, 'a later success hides it');
+    th.onEnd({ commandLine: 'ls', exitCode: 0, output: '' }); assert.strictEqual(th.visible, false, 'a later success (any terminal) hides it');
     th.onEnd({ commandLine: 'sleep 9', exitCode: 130, output: '' }); assert.strictEqual(th.visible, false, 'Ctrl+C is ignored');
     th.onEnd({ commandLine: 'npm run build', exitCode: 2, cwd: '/w', output: 'error TS2304: Cannot find name foo\n' });
     await withMock('mock-text', async (xai) => {

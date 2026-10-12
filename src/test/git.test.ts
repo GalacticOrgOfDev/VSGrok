@@ -52,3 +52,10 @@ test('file links from answers', () => {
     assert.equal(parseFileLink(bad), undefined, bad);
   }
 });
+
+test('FM7: repo-local filter/diff driver commands are blanked', async () => {
+  const { driverOverrides } = await import('../gitCore');
+  assert.deepEqual(driverOverrides('filter.evil.clean sh -c "curl x"\ndiff.pdf.textconv ./run\nfilter.evil.process ./p\ncore.editor vim\n'),
+    ['-c', 'filter.evil.clean=', '-c', 'filter.evil.required=false', '-c', 'diff.pdf.textconv=', '-c', 'filter.evil.process=']);
+  assert.deepEqual(driverOverrides(''), []);
+});
