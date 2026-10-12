@@ -45,7 +45,7 @@ export const READ_TOOL_SPECS: ToolSpec[] = [
 /** Write tools: offered only when Agent is on; each still needs the user's Accept/confirm. */
 export const WRITE_TOOL_SPECS: ToolSpec[] = [
   { type: 'function', function: { name: 'propose_plan', description: 'Propose a multi-file change as ONE plan the user reviews on a single card (per-file diffs and checkboxes) and can undo in one click. Use this whenever a change touches more than one file. ops: create (new file, content required), modify (full new content), delete, rename (newPath, optional new content). Returns which files were applied.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'One-line description of the plan' }, changes: { type: 'array', items: { type: 'object', properties: { op: { type: 'string', enum: ['create', 'modify', 'delete', 'rename'] }, path: { type: 'string' }, newPath: { type: 'string' }, content: { type: 'string' } }, required: ['op', 'path'] } } }, required: ['changes'] } } },
-  { type: 'function', function: { name: 'run_tests', description: 'Detect and run the project\'s test command (package.json test script, pytest, go test, cargo test, or the vsgrok.testCommand setting). The user approves the command first. Returns exit code, parsed failures with file:line, and the output tail.', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'run_tests', description: 'Detect and run the project\'s test command (package.json test script, pytest, go test, cargo test, or the vsgrok.testCommand setting). Detection uses the project nearest to `path` (e.g. "palette" for a project in palette/), and the command runs in that folder. The user approves the command first. Returns exit code, parsed failures with file:line, and the output tail.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Optional workspace-relative folder or file inside the project to test (default: workspace root)' } } } } },
   { type: 'function', function: { name: 'propose_edit', description: 'Propose full new contents for a file (new or existing). The user sees a diff and must Accept; returns whether it was applied.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, reason: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function', function: { name: 'run_command', description: 'Run a shell command in the workspace root. The user must confirm first. Returns exit code and output.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
 ];
@@ -80,12 +80,13 @@ async function readText(uri: vscode.Uri): Promise<string> {
   return text.length > MAX_READ ? text.slice(0, MAX_READ) + `\n…[truncated at ${MAX_READ} chars]` : text;
 }
 
-export async function runCommand(command: string, token: vscode.CancellationToken, card: { runs?: string[]; source?: string; repoControlled?: boolean } = {}): Promise<string> {
-  const ok = await requestApproval({ kind: 'command', command, ...card }, { signal: toSignal(token) });
+export async function runCommand(command: string, token: vscode.CancellationToken, card: { runs?: string[]; source?: string; repoControlled?: boolean; cwd?: string } = {}): Promise<string> {
+  const { cwd, ...shown } = card;
+  const ok = await requestApproval({ kind: 'command', command, ...shown, source: cwd ? `${shown.source ?? 'Grok'} · runs in ${cwd}/` : shown.source }, { signal: toSignal(token) });
   if (!ok) { return 'User declined to run the command.'; }
   const cp = await import('child_process');
   return new Promise((resolve) => {
-    const child = cp.spawn(command, { cwd: root().fsPath, shell: true });
+    const child = cp.spawn(command, { cwd: cwd ? vscode.Uri.joinPath(root(), cwd).fsPath : root().fsPath, shell: true });
     let out = '';
     const add = (d: Buffer) => { out += d.toString(); if (out.length > 50_000) { out = out.slice(-50_000); } };
     child.stdout.on('data', add); child.stderr.on('data', add);
@@ -160,7 +161,7 @@ async function executeToolInner(name: string, args: any, token: vscode.Cancellat
     switch (name) {
       case 'get_workspace_overview': return await workspaceOverview(token);
       case 'get_problems': return getProblemsTool(args);
-      case 'run_tests': return await runTestsTool(runCommand, token);
+      case 'run_tests': return await runTestsTool(runCommand, token, typeof args?.path === 'string' && args.path.trim() ? args.path : undefined);
       case 'propose_plan': return await proposePlan(args, toSignal(token));
       case 'find_relevant_files': return await workspaceIndex.findRelevant(String(args.query ?? ''), Number(args.max) || 10, token);
       case 'read_file': {

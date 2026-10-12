@@ -1,6 +1,6 @@
 // Sidebar chat webview provider: streaming, context chips, code actions, agent mode, stop.
 import { parseFileLink } from './gitCore';
-import { DEMO_LIMITS, isDemoTrigger } from './chatDemo';
+import { DEMO_LIMITS, DEMO_STEP, DEMO_STOP_PREFIX, isDemoTrigger, demoOverBudget, addSpend, ZERO_SPEND, DemoSpend } from './chatDemo';
 import * as vscode from 'vscode';
 import { streamChat, ChatMessage, GrokApiError, TextPart, ImagePart } from './xai/client';
 import { requestOptions, cfg, clampNum, SECRET_KEY, DEFAULT_MODEL, apiMode, serverTools } from './config';
@@ -471,6 +471,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       } break;
       case 'pickImage': await this.pickImages(); break;
       case 'stop': this.stop(); break;
+      case 'demoContinue': await this.demoContinue(); break;
+      case 'demoStop': this.demo = undefined; break;
       case 'runTask': if (typeof m.text === 'string') { await this.runTask(m.text); } break;
       case 'undoTask': if (typeof m.id === 'string') { await this.undoTask(m.id); } break;
       case 'regenerate': if (this.lastUser && !this.busy) {
@@ -807,8 +809,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private consentHinted = false;
   private task?: TaskRun;
-  /** Demo budget (0.14.2): spend since the demo started in this chat; turns in demo mode stop at the limits. */
-  private demo?: { chatId: string; tokens: number; costUsd: number; costMissing: boolean };
+  /** Demo budget: exists only while a demo runs (its trigger turn, plus turns the user continues from the budget card). */
+  private demo?: { chatId: string; spent: DemoSpend; limits: { maxCostUsd: number; maxWeightedTokens: number }; awaiting?: boolean; continuing?: boolean };
   /** Finished tasks that can still be undone (most recent 5). */
   private taskTrackers = new Map<string, TaskTracker>();
   private taskSeq = 0;
@@ -912,8 +914,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const store = (c.get<boolean>('responses.store') ?? true) && !this.noStore;
     const maxSteps = task ? task.maxSteps : clampNum(c.get('agent.maxSteps'), 1, 50, 15);
     const limits = this.taskLimits();
-    if (!task && isDemoTrigger(this.lastUser?.text ?? '')) { this.demo = { chatId: this.chatId, tokens: 0, costUsd: 0, costMissing: false }; }
-    const demo = this.demo?.chatId === this.chatId ? this.demo : undefined;
+    if (this.demo?.continuing && this.demo.chatId === this.chatId) { /* continued from the budget card: keep spend and raised limits */ }
+    else if (!task && isDemoTrigger(this.lastUser?.text ?? '')) { this.demo = { chatId: this.chatId, spent: { ...ZERO_SPEND }, limits: { ...DEMO_LIMITS } }; }
+    else { this.demo = undefined; } // any other turn: no demo cap
+    const demo = task ? undefined : this.demo;
+    if (demo) { demo.awaiting = false; demo.continuing = false; }
+    let demoStopped = false;
     const cts = this.cts!;
     const signal = this.abort!.signal;
     const base = await requestOptions(this.ctx, { signal, convId: this.convId });
@@ -999,10 +1005,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.post({ type: 'toolEvent', id: aid, toolId: t, state: 'running', label: toolLabel(call.name, args) });
           if (task) { this.pushTask(toolLabel(call.name, args)); }
         },
-        budget: !task && demo ? (acc) => {
-          const missing = demo.costMissing || acc.costMissing > 0;
-          return budgetExceeded({ tokens: demo.tokens + acc.inputTokens + acc.outputTokens, costUsd: missing ? undefined : demo.costUsd + acc.costTicks / 1e10 }, DEMO_LIMITS);
-        } : task ? (acc) => {
+        budget: demo ? (acc) => demoOverBudget(addSpend(demo.spent, { input: acc.inputTokens, cached: acc.cachedTokens, output: acc.outputTokens, costUsd: acc.costTicks / 1e10, costMissing: acc.costMissing > 0 }), demo.limits)
+        : task ? (acc) => {
           task.tokens = acc.inputTokens + acc.outputTokens;
           task.costUsd = acc.costMissing >= task.steps && task.steps > 0 ? undefined : acc.costTicks / 1e10;
           task.costMissing = acc.costMissing;
@@ -1031,7 +1035,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       if (r.hitStepCap) { this.post({ type: 'streamChunk', id: aid, delta: `\n\n_Reached the limit of ${maxSteps} tool rounds (${task ? 'vsgrok.agent.task.maxSteps' : 'vsgrok.agent.maxSteps'})._` }); }
       this.offerChecks();
-      if (demo && !task) { demo.tokens += r.inputTokens + r.outputTokens; demo.costUsd += r.costTicks / 1e10; demo.costMissing ||= r.costMissing > 0; }
+      if (demo) {
+        demo.spent = addSpend(demo.spent, { input: r.inputTokens, cached: r.cachedTokens, output: r.outputTokens, costUsd: r.costTicks / 1e10, costMissing: r.costMissing > 0 });
+        demoStopped = !!r.stopReason?.startsWith(DEMO_STOP_PREFIX);
+      }
       this.meter = addTurn(this.meter, { input: r.inputTokens, output: r.outputTokens, reasoning: r.reasoningTokens, cached: r.cachedTokens,
         costUsd: r.costMissing >= r.steps ? undefined : r.costTicks / 1e10, costMissing: r.costMissing });
       this.pushMeter();
@@ -1052,7 +1059,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.conv = { items: [...this.conv.items.slice(0, this.preTurn?.len ?? 0), ...newInput.filter(i => i.role === 'user' || i.role === 'system'),
         { role: 'assistant', content: `[My previous answer was ${err.kind === 'aborted' ? 'stopped by the user' : 'interrupted by an error'} before it finished.]` }],
       previousResponseId: undefined, resendFull: true, userTurns: turnsAfter };
+    } finally {
+      // The demo cap lives only while the demo runs: it ends when the turn finishes, fails or is stopped, unless the
+      // budget stopped it, in which case the user picks Continue (+$0.50) or Stop on an in-chat card.
+      if (demo) {
+        if (demoStopped) {
+          demo.awaiting = true;
+          const s = demo.spent;
+          this.post({ type: 'demoBudget', spent: s.costMissing ? undefined : s.costUsd, limit: demo.limits.maxCostUsd, step: DEMO_STEP.costUsd });
+        } else { this.demo = undefined; }
+      }
     }
+  }
+
+  private async demoContinue() {
+    const d = this.demo;
+    if (!d?.awaiting || d.chatId !== this.chatId || this.busy) { return; }
+    d.limits = { maxCostUsd: d.limits.maxCostUsd + DEMO_STEP.costUsd, maxWeightedTokens: d.limits.maxWeightedTokens + DEMO_STEP.weightedTokens };
+    d.awaiting = false; d.continuing = true;
+    await this.send(`Continue the demo from where you stopped. The demo budget is now $${d.limits.maxCostUsd.toFixed(2)}.`);
   }
 
   /** Guard (independent of store/chain settings): every user message shown in this chat, before the current one, must be

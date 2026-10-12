@@ -407,3 +407,41 @@ test('UIGrok 0.14.1: tab focus kept + tabpanel, Delete ignored on a single tab, 
   mb.click(); assert.ok(sent.some(m => m.type === 'mcpServers'));
   post({ type: 'mcpState', errors: 0, pending: 0 }); assert.equal(mb.hidden, true);
 });
+
+test('0.14.3: a turn renders strictly in arrival order: text, tool, card, text, error card, and action cards are revealed', async () => {
+  const { w, d, post } = boot();
+  let revealed = 0; w.HTMLElement.prototype.scrollIntoView = function () { revealed++; };
+  const tick = () => new Promise(r => setTimeout(r, 5));
+  post({ type: 'streamStart', id: 'a1' });
+  post({ type: 'streamChunk', id: 'a1', delta: 'First I will look around.' }); await tick();
+  post({ type: 'toolEvent', id: 'a1', toolId: 't1', state: 'running', label: 'Reading overview' });
+  post({ type: 'approvalRequest', reqId: 'c1', request: { kind: 'command', command: 'npm test' } });
+  assert.equal(revealed, 1, 'action card scrolled into view');
+  assert.equal(d.activeElement!.textContent, 'Run');
+  post({ type: 'toolEvent', id: 'a1', toolId: 't1', state: 'done', label: 'Read overview' }); // update in place, no move
+  post({ type: 'streamChunk', id: 'a1', delta: 'Now the tests passed.' }); await tick();
+  post({ type: 'toolEvent', id: 'a1', toolId: 't2', state: 'running', label: 'Searching' });
+  post({ type: 'errorCard', card: { title: 'Oops', body: 'x' } });
+  post({ type: 'streamChunk', id: 'a1', delta: 'Done.' }); await tick();
+  post({ type: 'streamDone', id: 'a1' }); await tick();
+  const turn = d.querySelector('.message.assistant')!;
+  const seq = Array.from(turn.children).map(c => c.classList.contains('body') ? 'text:' + c.textContent!.trim()
+    : c.classList.contains('tool-events') ? 'items:' + Array.from(c.children).map(x => x.classList.contains('tool-event') ? 'tool' : 'card').join(',')
+      : c.className.split(' ')[0]);
+  assert.deepEqual(seq.filter(x => x !== 'who' && x !== 'msg-footer'), [
+    'text:First I will look around.', 'items:tool,card', 'text:Now the tests passed.', 'items:tool,card', 'text:Done.',
+  ]);
+  assert.match((turn.querySelector('[data-tool-id="t1"] summary') as HTMLElement).textContent!, /^✓ Read overview/);
+  assert.equal(turn.querySelectorAll('.caret').length, 0, 'no caret left on finished segments');
+});
+
+test('0.14.3: demo budget card offers Continue (+$0.50) / Stop and posts the choice', () => {
+  const { d, post, sent } = boot();
+  post({ type: 'demoBudget', spent: 1.02, limit: 1, step: 0.5 });
+  const c = d.querySelector('.demo-budget')!;
+  const btns = Array.from(c.querySelectorAll('button')).map(b => b.textContent);
+  assert.deepEqual(btns, ['Continue (+$0.50)', 'Stop']);
+  assert.equal(d.activeElement!.textContent, 'Continue (+$0.50)');
+  (c.querySelector('button') as HTMLButtonElement).click();
+  assert.equal(sent.at(-1).type, 'demoContinue');
+});

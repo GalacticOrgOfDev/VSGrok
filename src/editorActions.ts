@@ -56,7 +56,7 @@ export async function runEditorAction(chat: ChatViewProvider, action: EditorActi
   const path = vscode.workspace.asRelativePath(ed.document.uri, false);
   let extra: Parameters<typeof actionPrompt>[1] = { label, path, instruction };
   if (action === 'tests') {
-    const tc = await detectProjectTests();
+    const tc = await detectProjectTests(path).catch(() => undefined);
     extra = { ...extra, framework: tc?.framework, testCommand: tc?.command, testLocation: testLocationHint(tc?.framework ?? '', path) };
   }
   if (action === 'fix') {

@@ -48,7 +48,7 @@ export function detectTestCommand(f: ProjectFiles, override?: string, overrideSo
       if (name) {
         const s = String(scripts[name]);
         const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-        const framework = /vitest/.test(s) || deps.vitest ? 'vitest' : /jest/.test(s) || deps.jest ? 'jest' : /mocha/.test(s) || deps.mocha ? 'mocha' : /node --test/.test(s) ? 'node:test' : 'npm-script';
+        const framework = frameworkOf(s, deps);
         const base = name.replace(/^test/, 'test');
         const runs = [`pre${base}`, name, `post${base}`].filter(k => typeof scripts[k] === 'string').map(k => `${k}: ${String(scripts[k])}`);
         return { command: `${pm} ${name === 'test' && pm !== 'yarn' ? 'test' : 'run ' + name}`.replace('yarn run test', 'yarn test'), framework, source: `package.json scripts.${name}`, runs, repoControlled: true };
@@ -62,6 +62,30 @@ export function detectTestCommand(f: ProjectFiles, override?: string, overrideSo
   if (f.hasCargo) { return { command: 'cargo test', framework: 'cargo', source: 'Cargo.toml' }; }
   return undefined;
 }
+
+/** Framework from the script text first (what actually runs); dependencies only when the script doesn't say. */
+export function frameworkOf(script: string, deps: Record<string, unknown> = {}): string {
+  if (/\bnode(?:\.exe)?\s+(?:[^|&;]*\s)?--test\b/.test(script)) { return 'node:test'; }
+  if (/\bvitest\b/.test(script)) { return 'vitest'; }
+  if (/\bjest\b/.test(script)) { return 'jest'; }
+  if (/\bmocha\b/.test(script)) { return 'mocha'; }
+  if (/\b(?:pytest|ava|tap|uvu)\b/.test(script)) { return script.match(/\b(pytest|ava|tap|uvu)\b/)![1]; }
+  if (/^\s*(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?\S+/.test(script)) { return 'npm-script'; }
+  return deps.vitest ? 'vitest' : deps.jest ? 'jest' : deps.mocha ? 'mocha' : 'npm-script';
+}
+
+/** Workspace-relative directory chain from `p` up to the root (''), or undefined if `p` escapes the workspace. */
+export function ancestorDirs(p: string | undefined): string[] | undefined {
+  const raw = (p ?? '').replace(/\\/g, '/');
+  if (/^[A-Za-z]:|^\//.test(raw)) { return undefined; }
+  const clean = raw.replace(/^\.\/+/, '').replace(/\/+$/, '');
+  if ( clean.split('/').some(x => x === '..')) { return undefined; }
+  const parts = clean.split('/').filter(x => x && x !== '.');
+  const out: string[] = [];
+  for (let i = parts.length; i >= 0; i--) { out.push(parts.slice(0, i).join('/')); }
+  return out;
+}
+export const PROJECT_MARKERS = ['package.json', 'pyproject.toml', 'pytest.ini', 'setup.cfg', 'go.mod', 'Cargo.toml'];
 
 export interface Failure { file?: string; line?: number; test?: string; message: string }
 
@@ -96,12 +120,24 @@ export function parseTestFailures(output: string, cwdHint?: string): Failure[] {
       add({ test: m[1], file, line, message: msg || 'failed' });
       continue;
     }
+    // node:test spec reporter: "✖ name (1.2ms)" followed by "  test at file.js:12:3" (failure details are repeated in a summary).
+    if ((m = l.match(/^\s*✖\s+(.+?)(?:\s+\([\d.]+m?s\))?\s*$/)) && !/^failing tests:?$/i.test(m[1])) {
+      let file: string | undefined, line: number | undefined, msg = 'failed';
+      for (let j = i + 1; j < Math.min(lines.length, i + 20); j++) {
+        const tm = lines[j].match(/^\s*test at (.+?):(\d+):\d+\s*$/); if (tm) { file = rel(tm[1]); line = +tm[2]; continue; }
+        if (/^\s*✖|^\s*✔|^ℹ/.test(lines[j])) { break; }
+        if (msg === 'failed' && lines[j].trim() && !/^\s*at /.test(lines[j])) { msg = lines[j].trim(); }
+      }
+      if (file || msg !== 'failed') { add({ test: m[1], file, line, message: msg }); }
+      continue;
+    }
     // node:test TAP: "not ok 3 - name" + "location: '/abs/path/file.js:12:3'"
     if ((m = l.match(/^\s*not ok \d+ - (.+)$/))) {
       let file: string | undefined, line: number | undefined, msg = 'failed';
       for (let j = i + 1; j < Math.min(lines.length, i + 30); j++) {
         const lm = lines[j].match(/location: '(.+?):(\d+):\d+'/); if (lm) { file = rel(lm[1]); line = +lm[2]; }
-        const em = lines[j].match(/^\s+error: [|'"-]*\s*(.*)$/); if (em && em[1]) { msg = em[1].replace(/'$/, ''); }
+        const em = lines[j].match(/^\s+error: [|>'"-]*\s*(.*)$/);
+        if (em) { msg = em[1] ? em[1].replace(/'$/, '') : (lines.slice(j + 1, j + 4).map(x => x.trim()).find(x => x && !/^(code|name|expected|actual|operator|stack):/.test(x)) ?? msg).replace(/^'|'(?: \+)?$/g, ''); }
         if (/^\s*\.\.\.\s*$/.test(lines[j])) { break; }
       }
       if (/^\s*not ok \d+ - [^\n]+/.test(l) && !/^# Subtest/.test(l)) { add({ test: m[1], file, line, message: msg }); }

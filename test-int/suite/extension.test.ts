@@ -718,6 +718,51 @@ suite('VSGrok in VS Code', () => {
   });
 
   // ---------- 0.11.0: chat history + tabs ----------
+  test('0.14.3: run_tests with path detects the nearest package.json and runs there (node --test, TAP parsed)', async () => {
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    const dir = vscode.Uri.joinPath(root, 'palette-int');
+    const w = (p: string, c: string) => vscode.workspace.fs.writeFile(vscode.Uri.joinPath(dir, p), Buffer.from(c));
+    await w('package.json', JSON.stringify({ name: 'palette', scripts: { test: 'node --test' } }));
+    await w('test/a.test.js', "const test = require('node:test'); const assert = require('node:assert/strict');\ntest('ok', () => {});\ntest('wrong on purpose', () => { assert.equal('#00ffff', '#00ff00'); });\n");
+    try {
+      const n0 = posts('approvalRequest').length;
+      const p = vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_tests', { path: 'palette-int/test' });
+      const card = await until(() => posts('approvalRequest')[n0]);
+      assert.strictEqual(card.request.command, 'npm test');
+      assert.match(card.request.source, /^palette-int\/package\.json scripts\.test · runs in palette-int\//);
+      await api.chat.testReceive({ type: 'approvalResponse', reqId: card.reqId, decision: 'approve' });
+      const out = String(await p);
+      assert.match(out, /^Ran `npm test` in palette-int\/ \(node:test, from palette-int\/package\.json scripts\.test\): exit code 1/);
+      assert.match(out, /1 failure\(s\):\n- test\/a\.test\.js:3 \[wrong on purpose\]/);
+      assert.match(String(await vscode.commands.executeCommand('vsgrok.__testRunTool', 'run_tests', { path: '../outside' })), /^Refused: .*outside the workspace/);
+    } finally { await vscode.workspace.fs.delete(dir, { recursive: true }); }
+  });
+
+  test('0.14.3: demo cap applies only while the demo runs; Continue raises it; later turns are never blocked', async () => {
+    await withMock('mock-text', async (xai) => {
+      const chat = api.chat;
+      const fc = (i: number) => ({ type: 'function_call', id: `fcd${i}`, call_id: `cd${i}`, name: 'get_workspace_overview', arguments: '{}', status: 'completed' });
+      const big = { input_tokens: 10_000, output_tokens: 100, cost_in_usd_ticks: 6_000_000_000 }; // $0.60 per step
+      await chat.testReceive({ type: 'clearChat' }); await idle();
+      await rreply(xai, { output: [fc(1)], usage: big });
+      await rreply(xai, { output: [fc(2)], usage: big });
+      await rreply(xai, { text: 'Paused summary.', usage: { input_tokens: 10, output_tokens: 10, cost_in_usd_ticks: 1 } });
+      const n0 = posts('demoBudget').length;
+      await chat.testReceive({ type: 'query', text: 'run the demo' }); await idle();
+      const card = await until(() => posts('demoBudget')[n0]);
+      assert.strictEqual(card.limit, 1); assert.strictEqual(card.step, 0.5);
+      // Continue: the same demo continues with a $1.50 cap.
+      await rreply(xai, { text: 'Continuing.', usage: big });
+      await chat.testReceive({ type: 'demoContinue' }); await idle();
+      assert.strictEqual(chat['demo'], undefined, 'demo ended when the continued turn finished');
+      // A normal turn afterwards: expensive tool steps are not capped.
+      await rreply(xai, { output: [fc(3)], usage: big }); await rreply(xai, { output: [fc(4)], usage: big }); await rreply(xai, { text: 'normal done' });
+      await chat.testReceive({ type: 'query', text: 'what files are here?' }); await idle();
+      assert.strictEqual(posts('demoBudget').length, n0 + 1);
+      assert.ok(!JSON.stringify((await (await fetch(xai + '/requests')).json() as unknown[]).at(-1)).includes('demo budget'));
+    });
+  });
+
   test('0.14.2: Run Demo sends the trigger; read_extension_doc reads only bundled DEMO.md; hint in system prompt', async () => {
     const doc = await vscode.commands.executeCommand<string>('vsgrok.__testRunTool', 'read_extension_doc', { name: 'DEMO.md' });
     assert.match(doc, /instructions for Grok/);

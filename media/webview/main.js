@@ -83,9 +83,33 @@
     });
   }
 
+  // Turns are sequential segments in arrival order: text, tool steps / cards, text, … New items never go above earlier text.
+  function closeText(t) {
+    if (!t.body) { return; }
+    if (t.timer) { cancelAnimationFrame(t.timer); t.timer = null; }
+    if (t.segRaw) { const st = t.state; t.state = 'segment'; renderTurn(t); t.state = st; } else { t.body.remove(); }
+    t.body = null; t.segRaw = '';
+  }
+  /** Container for a non-text item (tool step or card) at the end of the turn. */
+  function itemSlot(t) {
+    closeText(t);
+    const last = t.el.lastElementChild;
+    if (last && last.classList.contains('tool-events')) { t.tools = last; return last; }
+    const tools = document.createElement('div'); tools.className = 'tool-events'; t.el.appendChild(tools); t.tools = tools;
+    return tools;
+  }
+  /** Append a card at the end of the conversation: inside the streaming turn (as its newest segment) or after it. */
+  function appendLive(card) { const t = state.streaming ? turns.get(state.streaming) : null; (t && t.state === 'streaming' ? itemSlot(t) : messagesEl).appendChild(card); return card; }
+  function textSlot(t) {
+    if (!t.body) { const b = document.createElement('div'); b.className = 'body'; t.el.appendChild(b); t.body = b; t.segRaw = ''; }
+    return t.body;
+  }
+  /** A card that needs the user's action: always bring it into view (focus is set by the caller). */
+  function revealCard(card) { if (typeof card.scrollIntoView === 'function') { card.scrollIntoView({ block: 'nearest' }); } if (nearBottom()) { pill.hidden = true; } }
   function renderTurn(t) {
+    if (!t.body) { return; }
     const wasNear = nearBottom();
-    const r = md(t.raw, t.state === 'streaming');
+    const r = md(t.segRaw, t.state === 'streaming');
     t.body.innerHTML = r.html;
     t.body.querySelectorAll('a[href]').forEach((a) => { if (!a.title) { a.title = a.getAttribute('href'); } });
     decorateBlocks(t.body, r.open);
@@ -204,11 +228,10 @@
     const who = document.createElement('div'); who.className = 'who';
     if (iconSrc) { const av = document.createElement('img'); av.className = 'avatar'; av.src = iconSrc; av.alt = ''; who.appendChild(av); }
     const nm = document.createElement('span'); nm.textContent = 'Grok'; who.appendChild(nm); el.appendChild(who);
-    const tools = document.createElement('div'); tools.className = 'tool-events';
     const body = document.createElement('div'); body.className = 'body';
     body.innerHTML = '<span class="typing" aria-label="Grok is typing"><i></i><i></i><i></i></span>';
-    el.appendChild(tools); el.appendChild(body); messagesEl.appendChild(el);
-    const t = { id, el, body, tools, raw: '', timer: null, state: 'streaming' };
+    el.appendChild(body); messagesEl.appendChild(el);
+    const t = { id, el, body, tools: null, raw: '', segRaw: '', timer: null, state: 'streaming' };
     turns.set(id, t); state.streaming = id; setSendMode(true);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return t;
@@ -225,8 +248,7 @@
     if (!t || t.state !== 'streaming') { return; }
     t.state = st; t.el.dataset.state = st;
     if (t.timer) { cancelAnimationFrame(t.timer); t.timer = null; }
-    if (st !== 'error' || t.raw) { renderTurn(t); }
-    if (!t.raw && st !== 'error') { t.body.innerHTML = ''; }
+    if (t.body && t.segRaw) { renderTurn(t); } else if (t.body) { t.body.remove(); t.body = null; }
     const foot = document.createElement('div'); foot.className = 'msg-footer';
     if (st === 'stopped') { const s = document.createElement('span'); s.className = 'stopped-tag'; s.textContent = 'Stopped'; foot.appendChild(s); }
     if (st === 'error') {
@@ -536,7 +558,7 @@
     for (const m of msgs) {
       if (m.role === 'user') { addUser(String(m.text || ''), [], [], m.imageNames); continue; }
       const t = startTurn('h' + (++n) + '-' + Date.now().toString(36));
-      t.raw = String(m.text || '');
+      t.raw = String(m.text || ''); t.segRaw = t.raw;
       finishTurn(t, m.state === 'stopped' ? 'stopped' : 'done', {});
     }
     if (msgs.length) { const n0 = document.createElement('div'); n0.className = 'transcript-note'; n0.setAttribute('role', 'note'); n0.textContent = 'Reopened chat · tool steps and cards aren’t shown'; messagesEl.insertBefore(n0, messagesEl.firstChild); }
@@ -672,10 +694,10 @@
     actions.append(ok, deny); card.appendChild(actions);
     card.appendChild(status);
     const t = state.streaming ? turns.get(state.streaming) : null;
-    (t && t.tools ? t.tools : messagesEl).appendChild(card);
+    (t ? itemSlot(t) : messagesEl).appendChild(card);
     approvalCards.set(reqId, card);
     // Don't focus Approve: a stray Enter would approve up to 50 changes. Start on Select all.
-    stick(wasNear); (all.disabled ? deny : all).focus({ preventScroll: true });
+    stick(wasNear); revealCard(card); (all.disabled ? deny : all).focus({ preventScroll: true });
     announce.textContent = 'Approval needed: ' + v.title + (v.meta ? ', ' + v.meta : '');
   }
   function infoCard(cls, title, lines, buttons) {
@@ -688,7 +710,8 @@
     card.appendChild(actions);
     const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
     const t = state.streaming ? turns.get(state.streaming) : null;
-    (t && t.tools ? t.tools : messagesEl).appendChild(card); stick(wasNear);
+    (t ? itemSlot(t) : messagesEl).appendChild(card); stick(wasNear);
+    if (buttons && buttons.length) { revealCard(card); }
     return card;
   }
   const planCards = new Map();
@@ -752,9 +775,9 @@
     card.appendChild(actions);
     const status = document.createElement('div'); status.className = 'approval-status'; status.setAttribute('aria-live', 'polite'); card.appendChild(status);
     const t = state.streaming ? turns.get(state.streaming) : null;
-    (t && t.tools ? t.tools : messagesEl).appendChild(card);
+    (t ? itemSlot(t) : messagesEl).appendChild(card);
     approvalCards.set(reqId, card);
-    stick(wasNear);
+    stick(wasNear); revealCard(card);
     ok.focus({ preventScroll: true });
     announce.textContent = 'Approval needed: ' + head.textContent;
   }
@@ -773,7 +796,7 @@
   function renderUpdateCard(c) {
     if (!c) { return; }
     const wasNear = nearBottom();
-    if (!updateCardEl || !updateCardEl.isConnected) { updateCardEl = document.createElement('div'); updateCardEl.className = 'approval-card update-card'; updateCardEl.dataset.kind = 'edit'; messagesEl.appendChild(updateCardEl); }
+    if (!updateCardEl || !updateCardEl.isConnected) { updateCardEl = document.createElement('div'); updateCardEl.className = 'approval-card update-card'; updateCardEl.dataset.kind = 'edit'; appendLive(updateCardEl); }
     const card = updateCardEl; card.textContent = ''; card.removeAttribute('data-state');
     const head = document.createElement('div'); head.className = 'approval-head'; card.appendChild(head);
     const meta = document.createElement('div'); meta.className = 'approval-meta'; card.appendChild(meta);
@@ -859,6 +882,19 @@
         announce.textContent = v.title + '. ' + v.body;
         break;
       }
+      case 'demoBudget': {
+        const spent = typeof m.spent === 'number' ? '$' + m.spent.toFixed(2) + ' so far, as reported by xAI' : 'xAI reported no cost, so a token estimate was used';
+        const body = 'The demo paused at its $' + Number(m.limit).toFixed(2) + ' budget (' + spent + '). Continue with $' + Number(m.step).toFixed(2) + ' more, or stop here.';
+        const done = (c, msg, type) => { c.querySelectorAll('button').forEach((x) => (x.disabled = true)); c.querySelector('.approval-status').textContent = msg; vscode.postMessage({ type }); };
+        const card = infoCard('demo-budget', 'Demo budget reached', [body], [
+          { label: 'Continue (+$' + Number(m.step).toFixed(2) + ')', action: 'continue', primary: true, fn: (b, c) => done(c, 'Continuing the demo.', 'demoContinue') },
+          { label: 'Stop', action: 'stop', fn: (b, c) => done(c, 'Demo stopped.', 'demoStop') },
+        ]);
+        card.dataset.kind = 'note';
+        const primary = card.querySelector('.approval-btn.approve'); if (primary) { primary.focus({ preventScroll: true }); }
+        announce.textContent = 'Demo budget reached. ' + body;
+        break;
+      }
       case 'costMeter': {
         // Not a live region: the figures are read on demand (button + popover), never announced per turn.
         const el = $('cost-meter'); el.hidden = !!m.hidden; el.textContent = m.text || ''; el.title = m.tooltip || '';
@@ -872,14 +908,16 @@
         break;
       }
       case 'streamStart': startTurn(m.id); break;
-      case 'streamChunk': { const t = turns.get(m.id); if (t && t.state === 'streaming') { t.raw += m.delta; scheduleRender(t); } break; }
+      case 'streamChunk': { const t = turns.get(m.id); if (t && t.state === 'streaming') { t.raw += m.delta; textSlot(t); t.segRaw += m.delta; scheduleRender(t); } break; }
       case 'toolEvent': {
         const t = turns.get(m.id); if (!t) { break; }
-        let d = m.toolId ? t.tools.querySelector('[data-tool-id="' + String(m.toolId).replace(/[^\w-]/g, '') + '"]') : null;
+        const wn = nearBottom();
+        let d = m.toolId ? t.el.querySelector('[data-tool-id="' + String(m.toolId).replace(/[^\w-]/g, '') + '"]') : null;
         if (!d) {
           d = document.createElement('details'); d.className = 'tool-event'; if (m.toolId) { d.dataset.toolId = String(m.toolId); }
-          const sm = document.createElement('summary'); d.appendChild(sm); t.tools.appendChild(d);
+          const sm = document.createElement('summary'); d.appendChild(sm); itemSlot(t).appendChild(d);
         }
+        stick(wn);
         d.dataset.state = m.state || 'done';
         const sm = d.querySelector('summary');
         sm.textContent = (m.state === 'running' ? '◌ ' : m.state === 'error' ? '✕ ' : '✓ ') + String(m.label || m.text || '');
@@ -912,7 +950,7 @@
       case 'approvalRequest': addApprovalCard(String(m.reqId), m.request); break;
       case 'approvalResolved': resolveApprovalCard(String(m.reqId), String(m.state || 'cancelled')); break;
       case 'updateCard': renderUpdateCard(m.card); break;
-      case 'errorCard': { const wn = nearBottom(); if (m.card) { messagesEl.appendChild(errorCard(m.card, false)); } stick(wn); break; }
+      case 'errorCard': { const wn = nearBottom(); if (m.card) { appendLive(errorCard(m.card, false)); } stick(wn); break; }
       case 'rules': {
         const rc = $('rules-chip'); const v = VSGrokCards.rulesChip(m.files, m.truncated);
         rc.hidden = v.hidden; rc.textContent = '';

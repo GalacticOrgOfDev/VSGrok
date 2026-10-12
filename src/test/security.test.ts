@@ -86,12 +86,19 @@ test('0.14.2: demo doc is bundled, addressed to Grok, and keeps approvals', asyn
   assert.ok(pkg.contributes.commands.some((c: { command: string }) => c.command === 'vsgrok.runDemo'));
 });
 
-test('0.14.2: demo trigger phrases and $1 cap', async () => {
-  const { isDemoTrigger, DEMO_LIMITS } = await import('../chatDemo');
-  for (const t of ['hey grok, execute the demo', 'Run the demo', 'build the example project', 'please build the sample project']) { assert.ok(isDemoTrigger(t), t); }
-  for (const t of ['demolish the shed', 'what demo?', 'run tests']) { assert.ok(!isDemoTrigger(t), t); }
-  assert.deepEqual(DEMO_LIMITS, { maxCostUsd: 1, maxTokens: 400_000 });
-  const { budgetExceeded } = await import('../agent/autoApproveCore');
-  assert.match(budgetExceeded({ tokens: 10, costUsd: 1.01 }, DEMO_LIMITS) ?? '', /\$1\.00/);
-  assert.match(budgetExceeded({ tokens: 400_001 }, DEMO_LIMITS) ?? '', /token/);
+test('0.14.3: demo trigger phrases; budget prefers reported cost, weights cached tokens, cap fits a full run', async () => {
+  const d = await import('../chatDemo');
+  for (const t of ['hey grok, execute the demo', 'Run the demo', 'build the example project', 'please build the sample project', 'continue the demo']) { assert.ok(d.isDemoTrigger(t), t); }
+  for (const t of ['demolish the shed', 'what demo?', 'run tests']) { assert.ok(!d.isDemoTrigger(t), t); }
+  const L = d.DEMO_LIMITS;
+  // Reported cost wins: huge token counts don't stop a run that is under $1.
+  assert.equal(d.demoOverBudget({ input: 2_000_000, cached: 1_900_000, output: 50_000, costUsd: 0.6, costMissing: false }, L), undefined);
+  assert.match(d.demoOverBudget({ input: 1, cached: 0, output: 1, costUsd: 1.0, costMissing: false }, L) ?? '', /^demo budget of \$1\.00/);
+  // Cost missing: cached input counts at 0.25. The 0.14.2 log (~15 calls, ~30k context each, mostly cached) no longer trips it.
+  const run = { input: 15 * 30_000, cached: 15 * 27_000, output: 15 * 3_000, costUsd: 0, costMissing: true };
+  assert.ok(d.weightedTokens(run) < L.maxWeightedTokens * 0.75, String(d.weightedTokens(run)));
+  assert.equal(d.demoOverBudget(run, L), undefined);
+  // ...and the token cap stays under $1 at list price ($2/M input-equivalent).
+  assert.ok(L.maxWeightedTokens * 2 / 1e6 < 1);
+  assert.match(d.demoOverBudget({ input: 500_000, cached: 0, output: 0, costUsd: 0, costMissing: true }, L) ?? '', /xAI reported no cost/);
 });

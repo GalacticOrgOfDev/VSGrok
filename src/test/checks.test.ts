@@ -104,3 +104,54 @@ test('M5: problems are framed as untrusted, capped, and cannot close the frame',
   assert.match(w, /^<diagnostics source="untrusted tool output"/); assert.equal((w.match(/<\/diagnostics>/g) || []).length, 1);
   assert.ok(wrapProblems('x'.repeat(10_000)).length < PROBLEMS_CONTEXT_MAX + 300);
 });
+
+test('0.14.3: framework comes from the script (node --test with mocha in devDependencies is node:test)', async () => {
+  const { detectTestCommand, frameworkOf } = await import('../agent/checksCore');
+  const pkg = JSON.stringify({ scripts: { 'test:unit': 'tsc -p tsconfig.test.json && node --test out-test/test/*.test.js' }, devDependencies: { mocha: '^10' } });
+  assert.equal(detectTestCommand({ packageJson: pkg, lockfile: 'pnpm' })!.framework, 'node:test');
+  assert.equal(detectTestCommand({ packageJson: JSON.stringify({ name: 'palette', scripts: { test: 'node --test' } }) })!.command, 'npm test');
+  assert.equal(frameworkOf('node --test'), 'node:test');
+  assert.equal(frameworkOf('mocha out/**/*.test.js'), 'mocha');
+  assert.equal(frameworkOf('vitest run'), 'vitest');
+  assert.equal(frameworkOf('tsc && echo ok', { jest: '1' }), 'jest');
+});
+
+test('0.14.3: ancestorDirs walks to the root and refuses escapes', async () => {
+  const { ancestorDirs } = await import('../agent/checksCore');
+  assert.deepEqual(ancestorDirs('palette/test/color.test.js'), ['palette/test/color.test.js', 'palette/test', 'palette', '']);
+  assert.deepEqual(ancestorDirs('palette\\'), ['palette', '']);
+  assert.deepEqual(ancestorDirs(undefined), ['']);
+  assert.deepEqual(ancestorDirs('.'), ['']);
+  for (const bad of ['../x', 'a/../../b', '/etc', 'C:\\x']) { assert.equal(ancestorDirs(bad), undefined, bad); }
+});
+
+test('0.14.3: parses node:test TAP (Windows paths, error: |- block) and the spec reporter', async () => {
+  const { parseTestFailures } = await import('../agent/checksCore');
+  const tap = [
+    'TAP version 13',
+    'ok 4 - triad',
+    'not ok 5 - complementary of red is green',
+    '  ---',
+    '  duration_ms: 1.2',
+    "  location: 'e:\\AI Projects\\me\\Grok-ex\\palette\\test\\color.test.js:25:1'",
+    "  failureType: 'testCodeFailure'",
+    '  error: |-',
+    '    Expected values to be strictly equal:',
+    '    ',
+    "    '#00ffff' !== '#00ff00'",
+    '  code: ERR_ASSERTION',
+    '  ...',
+    '1..5',
+  ].join('\n');
+  const f = parseTestFailures(tap, 'e:\\AI Projects\\me\\Grok-ex\\palette');
+  assert.deepEqual(f, [{ test: 'complementary of red is green', file: 'test/color.test.js', line: 25, message: 'Expected values to be strictly equal:' }]);
+  const spec = [
+    '✔ triad (0.5ms)',
+    '✖ complementary of red is green (1.1ms)',
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:',
+    '  test at /w/palette/test/color.test.js:25:1',
+    'ℹ tests 5',
+  ].join('\n');
+  const g = parseTestFailures(spec, '/w/palette');
+  assert.equal(g.length, 1); assert.equal(g[0].file, 'test/color.test.js'); assert.equal(g[0].line, 25); assert.match(g[0].message, /strictly equal/);
+});

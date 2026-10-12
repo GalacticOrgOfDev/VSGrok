@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.3 — 2026-10-12
+
+**Fixed**
+- **The demo budget no longer blocks the rest of the chat.**
+  - The cap applies only while the demo runs, and ends when the demo finishes, fails or is stopped.
+  - It uses the cost xAI reports ($1). Tokens count only when xAI reports no cost, and then cached input counts at a quarter, matching grok-4.7's $0.50 vs $2 price.
+  - The fallback is 450k input-equivalent tokens (about $0.90 at list price). A full demo is estimated at about 250–300k.
+  - When the cap is hit, an in-chat card offers **Continue (+$0.50)** or **Stop**.
+- **`run_tests` takes an optional `path`.** It detects the test command from the nearest `package.json`, `pyproject.toml`, `pytest.ini`, `setup.cfg`, `go.mod` or `Cargo.toml`, staying inside the workspace, and runs it in that folder. The command card shows "runs in <dir>/".
+- **Test framework detection** reads the script first. `node --test` with mocha in devDependencies is now `node:test`, not `mocha`.
+- **Test output parsing** handles node:test TAP output with Windows paths and `error: |-` blocks, and the spec reporter.
+- **The chat is strictly chronological.** An assistant turn is a sequence of segments in arrival order (text, tool steps and cards, text, …). A tool step or card that arrives after text appears below it, never above. Error and update cards during a turn join it as its newest segment.
+  - The view follows new items when you're near the bottom.
+  - Cards that need action are always scrolled into view and focused.
+
+**Demo**
+- The palette `package.json` uses `node --test` with no arguments. `node --test test/` fails on Windows with Node 22.
+- Grok runs the tests with `run_tests` and `path`.
+- In a workspace that isn't empty, Grok first recommends an empty folder and offers to continue in `palette/` ("continue the demo").
+- Grok finishes by running `node <dir>/palette.js "#3b82f6" --scheme triad` through the command card.
+- Grok no longer investigates VSGrok's own source if a tool misbehaves.
+
 ## 0.14.2 — 2026-10-12
 
 **Fixed**
