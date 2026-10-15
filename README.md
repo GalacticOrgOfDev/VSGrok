@@ -101,4 +101,4 @@ Download `vsgrok-X.Y.Z.vsix` from [GitHub Releases](https://github.com/GalacticO
 
 ## Status
 
-v0.6.2. Unit- and integration-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.
+v0.15.0. Unit- and integration-tested against a local fake server and used live against the xAI API (see the [PoliSim example](docs/examples/polisim-workspace-analysis.md)); please report issues.
