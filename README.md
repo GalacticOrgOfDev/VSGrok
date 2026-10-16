@@ -2,6 +2,8 @@
 
 An AI coding assistant for VS Code. Chat, inline completions, and agent turns go only to the **xAI Grok API** with your own key. There is no VSGrok server and no telemetry.
 
+When xAI is down, rate-limited, or the key has no credits, VSGrok shows an in-chat card with a direct fix. It does not retry once streaming has started.
+
 Edits and shell commands wait for an **Approve** card in the chat. Reading and searching the workspace stays on your machine. `.env` and credential files are never opened. GitHub and other MCP servers are contacted only when you turn them on.
 
 **0.15.0** · [MIT](LICENSE) · VS Code **1.105+** · [Releases](https://github.com/GalacticOrgOfDev/VSGrok/releases) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/GalacticOrgOfDev/VSGrok/issues)
