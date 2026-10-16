@@ -6,7 +6,7 @@ When xAI is down, rate-limited, or the key has no credits, VSGrok shows an in-ch
 
 Edits and shell commands wait for an **Approve** card in the chat. Reading and searching the workspace stays on your machine. `.env` and credential files are never opened. GitHub and other MCP servers are contacted only when you turn them on.
 
-**0.15.0** · [MIT](LICENSE) · VS Code **1.105+** · [Releases](https://github.com/GalacticOrgOfDev/VSGrok/releases) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/GalacticOrgOfDev/VSGrok/issues)
+**0.15.0** · [MIT](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/LICENSE) · VS Code **1.105+** · [Releases](https://github.com/GalacticOrgOfDev/VSGrok/releases) · [Changelog](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/CHANGELOG.md) · [Issues](https://github.com/GalacticOrgOfDev/VSGrok/issues)
 
 New in this version: **VSGrok: Connect GitHub**, and a red approval card for any command that would read stored credentials.
 
@@ -34,18 +34,18 @@ Download `vsgrok-X.Y.Z.vsix` from [GitHub Releases](https://github.com/GalacticO
 
 VSGrok then updates itself. Once a day (`vsgrok.checkForUpdates`, on by default) it checks the latest GitHub release. If that release is newer, an **Update now** card in the chat downloads the `.vsix`, installs it, and offers **Reload Window**. Run **VSGrok: Check for Updates** any time.
 
-Publishing to the Marketplace and Open VSX (so the editor’s own auto-update can take over) is planned. See [docs/PUBLISHING.md](docs/PUBLISHING.md).
+Publishing to the Marketplace and Open VSX (so the editor’s own auto-update can take over) is planned. See [docs/PUBLISHING.md](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/docs/PUBLISHING.md).
 
 ## Setup
 
 1. Open **VSGrok** in the activity bar (the view is titled **VSGrok Agent**). With no key it shows a **Connect Grok** card.
-2. Click **Get an API key**, or run **VSGrok: Sign In / Get API Key**. That opens the [xAI Console](https://console.x.ai/team/default/api-keys). Sign in with your X or xAI account and create a key.
+2. Click **Get an API key**, or run **VSGrok: Sign In / Get API Key**. That opens the [xAI Console](https://console.x.ai/team/default/api-keys). Sign in, create a key, and add a few dollars of credit to start.
 3. Click **Paste API key**, or run **VSGrok: Set API Key**. The key is stored in VS Code SecretStorage, never in settings. **VSGrok: Clear API Key** removes it.
 4. Pick a model in the chat header, or with **VSGrok: Select Model**. The list comes from `GET /v1/models` and is cached for an hour. Offline, or before a key is set, VSGrok uses a built-in list. The default model is `grok-4.7`.
 
-**SuperGrok / X Premium.** Subscription sign-in is limited to partner apps xAI has approved (for example [OpenCode](https://x.ai/news/grok-opencode)). There is no public way for other apps to register, so VSGrok uses an API key. xAI bills that key per token, separately from a SuperGrok subscription. Budget a few dollars of credit on the Console to start. If xAI opens subscription sign-in to third-party apps, VSGrok will add it.
+**SuperGrok / X Premium.** Subscription sign-in is limited to partner apps xAI has approved (for example [OpenCode](https://x.ai/news/grok-opencode)). There is no public way for other apps to register, so VSGrok uses an API key. xAI bills that key per token, separately from a SuperGrok subscription. If xAI opens subscription sign-in to third-party apps, VSGrok will add it.
 
-To see the extension exercise itself, open an empty folder and run **VSGrok: Run Demo**, or ask Grok to execute the demo. A pre-flight card shows a cost estimate. Nothing is sent until you click **Start**. The script is [docs/DEMO.md](docs/DEMO.md). Every write and command still asks. A live run against a real project is written up in the [PoliSim workspace analysis](docs/examples/polisim-workspace-analysis.md).
+To see the extension exercise itself, open an empty folder and run **VSGrok: Run Demo**, or ask Grok to execute the demo. A pre-flight card shows a cost estimate. Nothing is sent until you click **Start**. The script is [docs/DEMO.md](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/docs/DEMO.md). Every write and command still asks. A live run against a real project is written up in the [PoliSim workspace analysis](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/docs/examples/polisim-workspace-analysis.md).
 
 ## Chat
 
@@ -291,4 +291,4 @@ CI runs the type-check, lint, unit tests and integration tests on every push and
 
 v0.15.0. Tested against a local fake xAI server and a GitHub MCP mock, and used live against the xAI API. Please [report issues](https://github.com/GalacticOrgOfDev/VSGrok/issues). For a bug, enable `vsgrok.diagnostics.enabled`, reproduce it, and run **VSGrok: Copy Diagnostics**.
 
-[MIT](LICENSE) licensed. Copyright 2026 Galactic Organization of Development.
+[MIT](https://github.com/GalacticOrgOfDev/VSGrok/blob/main/LICENSE) licensed. Copyright 2026 Galactic Organization of Development.
