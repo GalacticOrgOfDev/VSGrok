@@ -2,7 +2,7 @@
 
 An AI coding assistant for VS Code. Chat, inline completions, and agent turns go only to the **xAI Grok API** with your own key. There is no VSGrok server and no telemetry.
 
-When xAI is down, rate-limited, or the key has no credits, VSGrok shows an in-chat card with a direct fix. It does not retry once streaming has started.
+When xAI is down, rate-limited, or the key has no credits, VSGrok shows an in-chat card with a direct fix. Offline, timeout, missing-key, credits, and context-length errors all become cards you can act on. It does not retry once streaming has started.
 
 Edits and shell commands wait for an **Approve** card in the chat. Reading and searching the workspace stays on your machine. `.env` and credential files are never opened. GitHub and other MCP servers are contacted only when you turn them on.
 
@@ -43,7 +43,7 @@ Publishing to the Marketplace and Open VSX (so the editor’s own auto-update ca
 3. Click **Paste API key**, or run **VSGrok: Set API Key**. The key is stored in VS Code SecretStorage, never in settings. **VSGrok: Clear API Key** removes it.
 4. Pick a model in the chat header, or with **VSGrok: Select Model**. The list comes from `GET /v1/models` and is cached for an hour. Offline, or before a key is set, VSGrok uses a built-in list. The default model is `grok-4.7`.
 
-**SuperGrok / X Premium.** Subscription sign-in is limited to partner apps xAI has approved (for example [OpenCode](https://x.ai/news/grok-opencode)). There is no public way for other apps to register, so VSGrok uses an API key. xAI bills that key per token, separately from a SuperGrok subscription. If xAI opens subscription sign-in to third-party apps, VSGrok will add it.
+**SuperGrok / X Premium.** Subscription sign-in is limited to partner apps xAI has approved (for example [OpenCode](https://x.ai/news/grok-opencode)). There is no public way for other apps to register, so VSGrok uses an API key. xAI bills that key per token, separately from a SuperGrok subscription. Budget a few dollars of credit on the Console to start. If xAI opens subscription sign-in to third-party apps, VSGrok will add it.
 
 To see the extension exercise itself, open an empty folder and run **VSGrok: Run Demo**, or ask Grok to execute the demo. A pre-flight card shows a cost estimate. Nothing is sent until you click **Start**. The script is [docs/DEMO.md](docs/DEMO.md). Every write and command still asks. A live run against a real project is written up in the [PoliSim workspace analysis](docs/examples/polisim-workspace-analysis.md).
 
